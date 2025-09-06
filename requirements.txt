@@ -1,0 +1,7 @@
+openai
+faiss-cpu
+pandas
+numpy
+sentence-transformers
+pyodbc
+python-dotenv
