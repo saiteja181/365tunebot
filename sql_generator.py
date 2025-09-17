@@ -3,7 +3,7 @@ from typing import List, Dict
 
 class SQLQueryGenerator:
     def __init__(self):
-        self.system_prompt = """You are an expert SQL query generator. Given a natural language question and relevant database schema information, generate a precise SQL query.
+        self.system_prompt = """You are an expert SQL query generator. Given a natural language question, relevant database schema information, and optional conversation context, generate a precise SQL query.
 
 Guidelines:
 1. Generate only the SQL query without any explanation or formatting
@@ -13,6 +13,12 @@ Guidelines:
 5. Include relevant WHERE clauses based on the question
 6. Use appropriate aggregate functions when needed
 7. Return only the SQL query, nothing else
+8. CONTEXT HANDLING: If conversation context is provided, analyze it to understand:
+   - Previous filters or conditions that should be maintained
+   - References to specific data from previous queries
+   - Follow-up questions that build upon previous results
+   - Comparative queries (e.g., "compared to that", "same department", "those users")
+   - Implicit assumptions based on prior conversation
 
 License Name Mappings (use these exact names in LIKE or = comparisons):
 - E1 = "Office 365 E1"
@@ -56,23 +62,48 @@ Important Notes:
 - For country-based queries, use ISO country codes: LastLogin_Country = 'IN' (for India), 'US' (for USA), etc.
 - When asked for "which department spent more/most", return the department with highest spending, use ORDER BY TotalSpent DESC and TOP 1
 - When asked for "spending by department", show all departments with ORDER BY TotalSpent DESC
+
+CRITICAL - Account Status Rules:
+- The UserRecords table has AccountStatus column with values: 'Active', 'Disabled', 'Inactive'
+- For ACTIVE users: use AccountStatus = 'Active'
+- For INACTIVE users: use AccountStatus IN ('Disabled', 'Inactive') OR AccountStatus != 'Active'
+- NEVER use AccountEnabled column for active/inactive queries
+- For "inactive users" questions, always use AccountStatus != 'Active'
+- For "disabled users" questions, use AccountStatus = 'Disabled'
+- For "all users except active" questions, use AccountStatus != 'Active'
 """
     
-    def generate_sql_query(self, user_query: str, relevant_schemas: List[str]) -> str:
-        """Generate SQL query based on user question and relevant schemas"""
+    def generate_sql_query(self, user_query: str, relevant_schemas: List[str], conversation_context: str = "") -> str:
+        """Generate SQL query based on user question, relevant schemas, and conversation context"""
         
         # Combine schemas into context
         schema_context = "\n\n".join(relevant_schemas)
         
+        # Create context-aware prompt
+        context_section = ""
+        if conversation_context and conversation_context.strip():
+            context_section = f"""
+Conversation Context (for reference and continuity):
+{conversation_context}
+
+Important: Use the conversation context to understand:
+- What tables or data the user was previously asking about
+- Any filters, conditions, or specific criteria mentioned before
+- References to previous results (e.g., "those users", "same department", "from that query")
+- Follow-up questions that build on previous queries
+- Comparative questions (e.g., "compared to the previous result")
+
+"""
+        
         # Create the prompt
         prompt = f"""{self.system_prompt}
-
+{context_section}
 Database Schema:
 {schema_context}
 
-User Question: {user_query}
+Current User Question: {user_query}
 
-Generate the SQL query:"""
+Generate the SQL query that answers the current question, taking into account the conversation context if provided:"""
         
         try:
             sql_query = ask_o4_mini(prompt)
@@ -113,3 +144,21 @@ Please provide a corrected version of the SQL query that fixes this error. Retur
         except Exception as e:
             print(f"Error improving SQL query: {str(e)}")
             return sql_query
+    
+    def generate_contextual_query_with_fallback(self, user_query: str, relevant_schemas: List[str], conversation_context: str = "") -> str:
+        """Generate SQL query with context, with automatic fallback if context causes issues"""
+        
+        # First try with context if provided
+        if conversation_context:
+            try:
+                contextual_query = self.generate_sql_query(user_query, relevant_schemas, conversation_context)
+                # Basic validation: check if query looks reasonable
+                if contextual_query and len(contextual_query.strip()) > 10 and "SELECT" in contextual_query.upper():
+                    return contextual_query
+                else:
+                    print("Contextual query appears invalid, falling back to non-contextual query")
+            except Exception as e:
+                print(f"Error generating contextual query: {e}, falling back to non-contextual query")
+        
+        # Fallback to non-contextual query
+        return self.generate_sql_query(user_query, relevant_schemas, "")

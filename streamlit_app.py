@@ -25,108 +25,20 @@ except ImportError:
 # Page configuration
 st.set_page_config(
     page_title="365 Tune Bot",
-    page_icon="🤖",
+    page_icon="Bot",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for professional look
-st.markdown("""
-<style>
-    .main > div {
-        padding-top: 2rem;
-    }
-    
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin-bottom: 1rem;
-    }
-    
-    .metric-value {
-        font-size: 2rem;
-        font-weight: bold;
-        margin: 0;
-    }
-    
-    .metric-label {
-        font-size: 0.9rem;
-        opacity: 0.9;
-        margin-top: 0.5rem;
-    }
-    
-    .dashboard-header {
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
-        padding: 2rem;
-        border-radius: 15px;
-        color: white;
-        margin-bottom: 2rem;
-        text-align: center;
-    }
-    
-    .query-section {
-        background: white;
-        padding: 2rem;
-        border-radius: 15px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        border: 1px solid #e1e5e9;
-        margin: 2rem 0;
-    }
-    
-    .step-card {
-        background: #f8f9fa;
-        border-left: 4px solid #007bff;
-        padding: 1rem;
-        margin: 1rem 0;
-        border-radius: 5px;
-    }
-    
-    .stTextInput > div > div > input {
-        border-radius: 25px;
-        border: 2px solid #e1e5e9;
-        padding: 1rem 1.5rem;
-        font-size: 1.1rem;
-    }
-    
-    .stButton > button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 0.75rem 2rem;
-        border-radius: 25px;
-        font-weight: bold;
-        font-size: 1.1rem;
-        width: 100%;
-        transition: all 0.3s;
-    }
-    
-    .stButton > button:hover {
-        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        transform: translateY(-2px);
-    }
-    
-    .insight-box {
-        background: linear-gradient(135deg, #ff9a56 0%, #ff6b6b 100%);
-        color: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # Initialize session state
-# Initialize session state with defaults
 def initialize_session_state():
     """Initialize all session state variables with proper defaults"""
     if 'system' not in st.session_state:
         st.session_state.system = None
     if 'system_ready' not in st.session_state:
         st.session_state.system_ready = False
+    if 'theme' not in st.session_state:
+        st.session_state.theme = 'light'
     if 'dashboard_data' not in st.session_state or not isinstance(st.session_state.dashboard_data, dict):
         st.session_state.dashboard_data = {
             'Total Users': 0, 'Active Users': 0, 'Licensed Users': 0, 
@@ -138,6 +50,286 @@ def initialize_session_state():
 
 # Call initialization
 initialize_session_state()
+
+def get_theme_colors():
+    """Get colors based on current theme"""
+    if st.session_state.theme == 'dark':
+        return {
+            'bg_primary': '#1e1e1e',
+            'bg_secondary': '#2d2d2d',
+            'text_primary': '#ffffff',
+            'text_secondary': '#cccccc',
+            'accent_1': '#667eea',
+            'accent_2': '#764ba2',
+            'card_bg': '#2d2d2d',
+            'border': '#404040'
+        }
+    else:
+        return {
+            'bg_primary': '#ffffff',
+            'bg_secondary': '#f8f9fa',
+            'text_primary': '#333333',
+            'text_secondary': '#666666',
+            'accent_1': '#667eea',
+            'accent_2': '#764ba2',
+            'card_bg': '#ffffff',
+            'border': '#e1e5e9'
+        }
+
+def apply_shadcn_theme():
+    """Apply clean black and white theme"""
+    st.markdown("""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        /* Hide sidebar completely */
+        .css-1d391kg { display: none; }
+        section[data-testid="stSidebar"] { display: none !important; }
+        
+        /* Root variables - Clean Black and White */
+        :root {
+            --background: 0 0% 100%;
+            --foreground: 0 0% 0%;
+            --card: 0 0% 100%;
+            --card-foreground: 0 0% 0%;
+            --popover: 0 0% 100%;
+            --popover-foreground: 0 0% 0%;
+            --primary: 0 0% 0%;
+            --primary-foreground: 0 0% 100%;
+            --secondary: 0 0% 96%;
+            --secondary-foreground: 0 0% 0%;
+            --muted: 0 0% 96%;
+            --muted-foreground: 0 0% 45%;
+            --accent: 0 0% 96%;
+            --accent-foreground: 0 0% 0%;
+            --destructive: 0 84.2% 60.2%;
+            --destructive-foreground: 0 0% 100%;
+            --border: 0 0% 90%;
+            --input: 0 0% 90%;
+            --ring: 0 0% 0%;
+        }
+        
+        /* Main app container */
+        .stApp {
+            background-color: hsl(var(--background));
+            color: hsl(var(--foreground));
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        
+        /* Main content area */
+        .main > div {
+            padding: 2rem 1rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* Header styling */
+        .dashboard-header {
+            background: hsl(var(--primary));
+            color: hsl(var(--primary-foreground));
+            padding: 3rem 2rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            text-align: center;
+            border: 2px solid hsl(var(--border));
+        }
+        
+        /* Metric cards */
+        .metric-card {
+            background: hsl(var(--card));
+            border: 2px solid hsl(var(--border));
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 1rem;
+            transition: all 0.2s;
+        }
+        
+        .metric-card:hover {
+            border: 2px solid hsl(var(--foreground));
+            transform: translateY(-2px);
+        }
+        
+        .metric-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0;
+            color: hsl(var(--foreground));
+        }
+        
+        .metric-label {
+            font-size: 0.875rem;
+            color: hsl(var(--muted-foreground));
+            margin-top: 0.5rem;
+            font-weight: 500;
+        }
+        
+        /* Query section */
+        .query-section {
+            background: hsl(var(--card));
+            border: 1px solid hsl(var(--border));
+            padding: 2rem;
+            border-radius: 12px;
+            margin: 2rem 0;
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+        }
+        
+        .query-section h2 {
+            color: hsl(var(--foreground)) !important;
+            font-weight: 600 !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
+        .query-section p {
+            color: hsl(var(--muted-foreground)) !important;
+            margin-bottom: 0 !important;
+        }
+        
+        /* Step cards */
+        .step-card {
+            background: hsl(var(--card));
+            border: 1px solid hsl(var(--border));
+            border-left: 4px solid hsl(var(--primary));
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 8px;
+        }
+        
+        /* Input styling */
+        .stTextInput > div > div > input {
+            border: 1px solid hsl(var(--border));
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            background-color: hsl(var(--background));
+            color: hsl(var(--foreground));
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        
+        .stTextInput > div > div > input:focus {
+            outline: none;
+            border-color: hsl(var(--ring));
+            box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+        }
+        
+        /* Button styling */
+        .stButton > button {
+            background: hsl(var(--primary));
+            color: hsl(var(--primary-foreground));
+            border: 1px solid hsl(var(--border));
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        
+        .stButton > button:hover {
+            background: hsl(var(--primary) / 0.9);
+            box-shadow: 0 2px 4px 0 rgb(0 0 0 / 0.1);
+        }
+        
+        /* Selectbox styling */
+        .stSelectbox > div > div > div {
+            background-color: hsl(var(--background));
+            border: 1px solid hsl(var(--border));
+            border-radius: 8px;
+        }
+        
+        /* Metric styling */
+        .stMetric {
+            background: hsl(var(--card));
+            border: 1px solid hsl(var(--border));
+            padding: 1rem;
+            border-radius: 8px;
+        }
+        
+        /* Insight box */
+        .insight-box {
+            background: hsl(var(--secondary));
+            color: hsl(var(--secondary-foreground));
+            border: 1px solid hsl(var(--border));
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+        
+        /* Success/error messages */
+        .stAlert > div {
+            border-radius: 8px;
+        }
+        
+        /* Typography */
+        .css-10trblm, .css-16idsys p, .css-1629p8f h1, .css-1629p8f h2, .css-1629p8f h3 {
+            color: hsl(var(--foreground)) !important;
+            font-family: 'Inter', sans-serif !important;
+        }
+        
+        /* DataFrame styling */
+        .dataframe {
+            background-color: hsl(var(--card)) !important;
+            border: 1px solid hsl(var(--border)) !important;
+            border-radius: 8px !important;
+        }
+        
+        .dataframe th {
+            background-color: hsl(var(--muted)) !important;
+            color: hsl(var(--muted-foreground)) !important;
+            font-weight: 600 !important;
+        }
+        
+        .dataframe td {
+            color: hsl(var(--foreground)) !important;
+        }
+        
+        /* Chart containers */
+        .js-plotly-plot {
+            background-color: hsl(var(--card)) !important;
+            border: 1px solid hsl(var(--border)) !important;
+            border-radius: 8px !important;
+        }
+        
+        /* Remove default Streamlit padding */
+        .css-1kyxreq {
+            margin-top: -2rem;
+        }
+        
+        /* Tab styling if any */
+        .stTabs > div > div > div > div {
+            background: hsl(var(--background));
+            border: 1px solid hsl(var(--border));
+            border-radius: 8px;
+        }
+        
+        /* Expander styling */
+        .streamlit-expanderHeader {
+            background-color: hsl(var(--card));
+            border: 1px solid hsl(var(--border));
+            border-radius: 8px;
+        }
+        
+        /* Progress bar */
+        .stProgress > div > div {
+            background-color: hsl(var(--primary));
+        }
+        
+        /* Info, success, error styling */
+        .stInfo, .stSuccess, .stError, .stWarning {
+            border-radius: 8px !important;
+            border: 1px solid hsl(var(--border)) !important;
+        }
+        
+        /* Spinner */
+        .stSpinner > div {
+            border-color: hsl(var(--primary)) !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Apply the theme after defining the function
+apply_shadcn_theme()
 
 @st.cache_resource
 def initialize_system():
@@ -432,11 +624,11 @@ def display_dashboard_charts(data):
         return
         
     if not PLOTLY_AVAILABLE:
-        st.info("📊 Install Plotly for interactive charts: `pip install plotly`")
+        st.info("Install Plotly for interactive charts: `pip install plotly`")
         return
         
     # Section 1: Geographic Analytics
-    st.markdown("### 🌍 Geographic Distribution & Activity")
+    st.markdown("### Geographic Distribution & Activity")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -504,7 +696,7 @@ def display_dashboard_charts(data):
                 st.dataframe(df_geo)
     
     # Section 2: Department & License Analytics
-    st.markdown("### 🏢 Department Analysis & License Utilization")
+    st.markdown("### Department Analysis & License Utilization")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -612,10 +804,13 @@ def display_step_card(step_name, description, status, details):
         st.markdown(details)
 
 def main():
+    # Apply shadcn theme CSS
+    apply_shadcn_theme()
+
     # Header
     st.markdown("""
     <div class="dashboard-header">
-        <h1 style="margin: 0; font-size: 2.5rem;">🤖 365 Tune Bot</h1>
+        <h1 style="margin: 0; font-size: 2.5rem;">365 Tune Bot</h1>
         <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem; opacity: 0.9;">
             Your intelligent Microsoft 365 data assistant - Ask questions about your data in natural language
         </p>
@@ -624,33 +819,33 @@ def main():
     
     # Initialize system
     if not st.session_state.system_ready:
-        with st.spinner("🚀 Initializing 365 Tune Bot..."):
+        with st.spinner("Initializing 365 Tune Bot..."):
             system, message = initialize_system()
             
             if system:
                 st.session_state.system = system
                 st.session_state.system_ready = True
-                st.success("✅ System ready! Loading dashboard...")
+                st.success("System ready! Loading dashboard...")
             else:
-                st.error(f"❌ {message}")
+                st.error(f"Error: {message}")
                 st.stop()
     
     # Load dashboard data only if system is ready and data is empty
     if (st.session_state.system and st.session_state.system_ready and 
         st.session_state.dashboard_data.get('Total Users', 0) == 0):
-        with st.spinner("📈 Loading dashboard insights..."):
+        with st.spinner("Loading dashboard insights..."):
             dashboard_data = load_dashboard_data(st.session_state.system)
             if isinstance(dashboard_data, dict):
                 st.session_state.dashboard_data.update(dashboard_data)
     
     # Dashboard Section
-    st.markdown("## 📈 Data Overview")
+    st.markdown("## Data Overview")
     
     # Display metrics
     display_dashboard_metrics(st.session_state.dashboard_data)
     
     # Display comprehensive Power BI analytics
-    st.markdown("### 📊 Power BI Analytics Dashboard")
+    st.markdown("### Power BI Analytics Dashboard")
     display_dashboard_charts(st.session_state.dashboard_data)
     
     
@@ -667,7 +862,7 @@ def main():
         with col1:
             st.markdown(f"""
             <div class="insight-box">
-                <h4>💡 User Activity Insight</h4>
+                <h4>User Activity Insight</h4>
                 <p><strong>{active_percentage:.1f}%</strong> of users are currently active</p>
             </div>
             """, unsafe_allow_html=True)
@@ -675,7 +870,7 @@ def main():
         with col2:
             st.markdown(f"""
             <div class="insight-box">
-                <h4>📝 Licensing Insight</h4>
+                <h4>Licensing Insight</h4>
                 <p><strong>{licensed_percentage:.1f}%</strong> of users have licenses</p>
             </div>
             """, unsafe_allow_html=True)
@@ -683,7 +878,7 @@ def main():
     # Query Interface
     st.markdown("""
     <div class="query-section">
-        <h2 style="color: #333; margin-bottom: 1rem;">🤖 Ask 365 Tune Bot</h2>
+        <h2 style="color: #333; margin-bottom: 1rem;">Ask 365 Tune Bot</h2>
         <p style="color: #666; margin-bottom: 2rem;">
             Chat with your Microsoft 365 data in natural language. Examples: "Show me users from India", "How many active users do we have?", "Find users in IT department"
         </p>
@@ -700,11 +895,11 @@ def main():
         )
     
     with col2:
-        ask_button = st.button("🔍 Ask", key="ask_button")
+        ask_button = st.button("Ask", key="ask_button")
     
     # Sample questions as info
     st.markdown("""
-    **💡 Try these sample questions:**
+    **Try these sample questions:**
     - "Show me users from India"
     - "How many active users do we have?"
     - "Find users in the IT department" 
@@ -717,7 +912,7 @@ def main():
     # Process query
     if ask_button and user_query:
         st.markdown("---")
-        st.markdown("## 🔍 Query Processing")
+        st.markdown("## Query Processing")
         
         # Create containers for real-time updates
         progress_bar = st.progress(0)
@@ -728,7 +923,7 @@ def main():
         start_time = time.time()
         
         with status_container:
-            st.info(f"🔍 Processing: **{user_query}**")
+            st.info(f"Processing: **{user_query}**")
         
         # Process the query
         result = st.session_state.system.process_query(user_query)
@@ -737,7 +932,7 @@ def main():
         progress_bar.progress(100)
         
         if "error" in result:
-            st.error(f"❌ Error: {result['error']}")
+            st.error(f"Error: {result['error']}")
         else:
             # Extract results
             faiss_results = result.get("step_1_vector_search", {}).get("results", [])
@@ -746,81 +941,78 @@ def main():
             sample_results = result.get("step_3_sql_execution", {}).get("sample_results", [])
             final_answer = result.get("step_4_final_answer", {}).get("answer", "")
             
-            # Display intermediate steps
+            # Display simplified processing status  
             with steps_container:
-                st.markdown("### 🔄 Processing Steps")
+                st.markdown("### Processing Status")
                 
-                col1, col2 = st.columns(2)
+                # Simple status indicators
+                col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
-                    # Step 1: Vector Search
-                    step1_details = ""
-                    if faiss_results:
-                        step1_details = f"📊 **Found {len(faiss_results)} relevant tables:**\n\n"
-                        for i, table in enumerate(faiss_results[:3], 1):
-                            table_name = table.get('table_name', 'Unknown')
-                            score = table.get('relevance_score', 0)
-                            preview = table.get('schema_preview', 'No preview')[:100]
-                            step1_details += f"{i}. **{table_name}** (relevance: {score:.3f})\n"
-                            step1_details += f"   *{preview}...*\n\n"
-                    else:
-                        step1_details = "*No relevant tables found*"
+                    status = "✅ Complete" if faiss_results else "❌ Failed"
+                    st.markdown(f"**1. Table Search**\n{status}")
                     
-                    display_step_card(
-                        "Step 1: Vector Database Search",
-                        "Finding relevant tables using semantic search",
-                        "completed" if faiss_results else "failed",
-                        step1_details
-                    )
-                    
-                    # Step 3: Query Execution
-                    step3_details = ""
-                    if sample_results:
-                        columns_list = ', '.join(list(sample_results[0].keys())[:5]) + ('...' if len(sample_results[0].keys()) > 5 else '') if sample_results else 'N/A'
-                        step3_details = f"✅ **Execution Results:**\n\n• **Rows retrieved:** {len(sample_results):,}\n• **Columns:** {columns_list}\n• **Status:** ✅ Success"
-                    else:
-                        step3_details = f"⚠️ **Execution Info:**\n\n{execution_info or 'No results found'}"
-                    
-                    display_step_card(
-                        "Step 3: Query Execution",
-                        "Running SQL query against database",
-                        "completed" if sample_results else "failed",
-                        step3_details
-                    )
-                
                 with col2:
-                    # Step 2: SQL Generation
-                    step2_details = ""
-                    if sql_query:
-                        step2_details = f"🔧 **Generated SQL Query:**\n\n```sql\n{sql_query}\n```\n\n*Query length: {len(sql_query)} characters*"
-                    else:
-                        step2_details = "*No SQL query generated*"
+                    status = "✅ Complete" if sql_query else "❌ Failed"
+                    st.markdown(f"**2. Query Generation**\n{status}")
                     
-                    display_step_card(
-                        "Step 2: SQL Query Generation",
-                        "Converting natural language to SQL query",
-                        "completed" if sql_query else "failed",
-                        step2_details
-                    )
+                with col3:
+                    status = "✅ Complete" if sample_results else "❌ Failed"
+                    st.markdown(f"**3. Data Retrieval**\n{status}")
                     
-                    # Step 4: NLP Processing
-                    step4_details = ""
-                    if final_answer:
-                        answer_preview = final_answer[:150] + '...' if len(final_answer) > 150 else final_answer
-                        step4_details = f"💬 **Answer Preview:**\n\n> {answer_preview}\n\n*Answer length: {len(final_answer)} characters*"
-                    else:
-                        step4_details = "*No final answer generated*"
+                with col4:
+                    status = "✅ Complete" if final_answer else "❌ Failed"
+                    st.markdown(f"**4. Response Generation**\n{status}")
+                
+                # Technical details in expandable section
+                with st.expander("🔧 Technical Details (Optional)", expanded=False):
+                    col1, col2 = st.columns(2)
                     
-                    display_step_card(
-                        "Step 4: NLP Processing",
-                        "Converting results to natural language",
-                        "completed" if final_answer else "failed",
-                        step4_details
-                    )
+                    with col1:
+                        # Step 1: Vector Search
+                        step1_details = ""
+                        if faiss_results:
+                            step1_details = f"**Found {len(faiss_results)} relevant tables:**\n\n"
+                            for i, table in enumerate(faiss_results[:3], 1):
+                                table_name = table.get('table_name', 'Unknown')
+                                score = table.get('relevance_score', 0)
+                                step1_details += f"{i}. **{table_name}** (relevance: {score:.3f})\n"
+                        else:
+                            step1_details = "*No relevant tables found*"
+                        
+                        st.markdown("**Step 1: Vector Database Search**")
+                        st.markdown(step1_details)
+                        
+                        # Step 3: Query Execution
+                        step3_details = ""
+                        if sample_results:
+                            columns_list = ', '.join(list(sample_results[0].keys())[:5]) + ('...' if len(sample_results[0].keys()) > 5 else '') if sample_results else 'N/A'
+                            step3_details = f"• **Rows retrieved:** {len(sample_results):,}\n• **Columns:** {columns_list}\n• **Status:** Success"
+                        else:
+                            step3_details = f"**Execution Info:** {execution_info or 'No results found'}"
+                        
+                        st.markdown("**Step 3: Query Execution**")
+                        st.markdown(step3_details)
+                    
+                    with col2:
+                        # Step 2: SQL Generation (in expandable details only)
+                        if sql_query:
+                            st.markdown("**Step 2: Generated SQL Query**")
+                            st.code(sql_query, language='sql')
+                        
+                        # Step 4: NLP Processing
+                        step4_details = ""
+                        if final_answer:
+                            step4_details = f"✅ Natural language response generated successfully\n\n*Response length: {len(final_answer)} characters*"
+                        else:
+                            step4_details = "❌ No final answer generated"
+                        
+                        st.markdown("**Step 4: NLP Processing**")
+                        st.markdown(step4_details)
             
             # Display results
             with results_container:
-                st.markdown("### 🎯 Results")
+                st.markdown("### Results")
                 
                 # Processing summary
                 col1, col2, col3, col4 = st.columns(4)
@@ -833,19 +1025,20 @@ def main():
                 with col4:
                     st.metric("Answer Length", len(final_answer) if final_answer else 0)
                 
-                # Final Answer
+                # Final Answer - Clean presentation without SQL details
                 if final_answer:
-                    st.markdown("#### 🤖 365 Tune Bot Response")
+                    st.markdown("#### 365 Tune Bot Response")
                     st.markdown(f"""
                     <div style="
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        background: hsl(var(--primary));
                         padding: 2rem;
-                        border-radius: 15px;
-                        color: white;
+                        border-radius: 8px;
+                        color: hsl(var(--primary-foreground));
                         margin: 1rem 0;
+                        border: 2px solid hsl(var(--border));
                     ">
-                        <h4 style="margin-top: 0; color: white;">💬 365 Tune Bot Says:</h4>
-                        <p style="font-size: 1.1rem; line-height: 1.6; margin-bottom: 0;">{final_answer}</p>
+                        <h4 style="margin-top: 0; color: hsl(var(--primary-foreground));">💬 Answer:</h4>
+                        <div style="font-size: 1.1rem; line-height: 1.6; margin-bottom: 0;">{final_answer}</div>
                     </div>
                     """, unsafe_allow_html=True)
 

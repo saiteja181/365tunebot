@@ -32,8 +32,8 @@ def ask_o4_mini(question):
                 "content": question,
             }
         ],
-        max_completion_tokens=500,  # Reduced further for faster processing
-        timeout=20,  # Reduced timeout to 20 seconds
+        max_completion_tokens=1000,  # Increased for complex SQL generation
+        timeout=60,  # Increased timeout for complex queries
         model=DEPLOYMENT
     )
     return response.choices[0].message.content

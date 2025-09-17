@@ -65,7 +65,7 @@ class TextToSQLSystem:
         print("System initialized successfully!")
         return True
     
-    def process_query(self, user_query: str) -> dict:
+    def process_query(self, user_query: str, conversation_context: str = "") -> dict:
         """Process a user query through the complete pipeline"""
         if not self.is_initialized:
             return {"error": "System not initialized. Please run initialize_system first."}
@@ -97,7 +97,9 @@ class TextToSQLSystem:
             
             # Step 2: Generate SQL query
             print("\nStep 2: Generating SQL query...")
-            sql_query = self.sql_generator.generate_sql_query(user_query, relevant_schemas)
+            if conversation_context:
+                print(f"Using conversation context: {conversation_context[:100]}...")
+            sql_query = self.sql_generator.generate_sql_query(user_query, relevant_schemas, conversation_context)
             
             if not sql_query:
                 return {"error": "Failed to generate SQL query"}
@@ -117,6 +119,16 @@ class TextToSQLSystem:
                     print(f"Improved SQL: {improved_query}")
                     success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(improved_query)
                     sql_query = improved_query  # Update for final response
+                
+                # If still failing and we used context, try without context as fallback
+                if not success and conversation_context:
+                    print("Context-based query failed, trying without context as fallback...")
+                    fallback_query = self.sql_generator.generate_sql_query(user_query, relevant_schemas, "")
+                    if fallback_query != sql_query:
+                        print(f"Fallback SQL: {fallback_query}")
+                        success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(fallback_query)
+                        if success:
+                            sql_query = fallback_query  # Update for final response
             
             if not success:
                 return {
