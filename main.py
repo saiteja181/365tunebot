@@ -9,17 +9,22 @@ from typing import Optional
 
 from schema_processor import SchemaProcessor
 from vector_db import VectorDatabase
-from sql_generator import SQLQueryGenerator
-from sql_executor import SQLExecutor
+from secure_sql_generator import SecureSQLQueryGenerator  # CHANGED for tenant security
+from secure_sql_executor import SecureSQLExecutor  # CHANGED for tenant security
 from result_processor import ResultProcessor
+from direct_answer_system import DirectAnswerSystem
+from ai_insights_generator import AIInsightsGenerator
+from tenant_security import TenantSecurityException  # NEW for tenant security
 
 class TextToSQLSystem:
     def __init__(self):
         self.schema_processor = SchemaProcessor("")
         self.vector_db = VectorDatabase()
-        self.sql_generator = SQLQueryGenerator()
-        self.sql_executor = SQLExecutor()
+        self.sql_generator = SecureSQLQueryGenerator()  # CHANGED
+        self.sql_executor = SecureSQLExecutor()  # CHANGED
         self.result_processor = ResultProcessor()
+        self.direct_answer_system = DirectAnswerSystem()
+        self.insights_generator = AIInsightsGenerator()
         self.is_initialized = False
     
     def initialize_system(self, csv_file_path: str, force_rebuild: bool = False):
@@ -36,6 +41,8 @@ class TextToSQLSystem:
             try:
                 self.schema_processor.load_processed_data(schema_file)
                 self.vector_db.load_index(index_file, metadata_file)
+                # Link direct answer system with schema processor
+                self.direct_answer_system.schema_processor = self.schema_processor
                 self.is_initialized = True
                 print("System initialized successfully from cached data!")
                 return True
@@ -60,17 +67,24 @@ class TextToSQLSystem:
         # Save processed data for future use
         self.schema_processor.save_processed_data(schema_file)
         self.vector_db.save_index(index_file, metadata_file)
-        
+
+        # Link direct answer system with schema processor
+        self.direct_answer_system.schema_processor = self.schema_processor
+
         self.is_initialized = True
         print("System initialized successfully!")
         return True
     
-    def process_query(self, user_query: str, conversation_context: str = "") -> dict:
-        """Process a user query through the complete pipeline"""
+    def process_query(self, user_query: str, conversation_context: str = "", session_id: str = "default", tenant_code: str = None) -> dict:
+        """Process a user query through the complete pipeline with tenant isolation"""
         if not self.is_initialized:
             return {"error": "System not initialized. Please run initialize_system first."}
-        
-        print(f"\nProcessing query: '{user_query}'")
+
+        # TENANT SECURITY: Require tenant_code
+        if not tenant_code:
+            return {"error": "tenant_code is required for security"}
+
+        print(f"\nProcessing query: '{user_query}' [Session: {session_id}]")
         
         try:
             # Step 1: Vector search for relevant tables
@@ -95,38 +109,51 @@ class TextToSQLSystem:
                 schema_text = self.schema_processor.get_table_schema_text(table_name)
                 relevant_schemas.append(schema_text)
             
-            # Step 2: Generate SQL query
+            # Step 2: Generate SQL query (using conversation history for speed)
             print("\nStep 2: Generating SQL query...")
             if conversation_context:
                 print(f"Using conversation context: {conversation_context[:100]}...")
-            sql_query = self.sql_generator.generate_sql_query(user_query, relevant_schemas, conversation_context)
-            
+
+            # Use optimized generation with conversation history and TENANT SECURITY
+            sql_query = self.sql_generator.generate_sql_query_secure(
+                user_query, relevant_schemas, tenant_code, conversation_context, session_id=session_id
+            )
+
             if not sql_query:
                 return {"error": "Failed to generate SQL query"}
-            
+
             print(f"Generated SQL: {sql_query}")
             print(f"Query length: {len(sql_query)} characters")
             
-            # Step 3: Execute SQL query
+            # Step 3: Execute SQL query with TENANT SECURITY
             print("\nStep 3: Executing SQL query...")
-            success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(sql_query)
+            success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(
+                sql_query, tenant_code, session_id
+            )
             
             if not success:
                 # Try to improve the query based on the error
                 print("Query failed, attempting to improve...")
-                improved_query = self.sql_generator.validate_and_improve_query(sql_query, str(results))
+                schema_context = "\n\n".join(relevant_schemas)
+                improved_query = self.sql_generator.validate_and_improve_query(sql_query, str(results), schema_context)
                 if improved_query != sql_query:
                     print(f"Improved SQL: {improved_query}")
-                    success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(improved_query)
+                    success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(
+                        improved_query, tenant_code, session_id
+                    )
                     sql_query = improved_query  # Update for final response
                 
                 # If still failing and we used context, try without context as fallback
                 if not success and conversation_context:
                     print("Context-based query failed, trying without context as fallback...")
-                    fallback_query = self.sql_generator.generate_sql_query(user_query, relevant_schemas, "")
+                    fallback_query = self.sql_generator.generate_sql_query_secure(
+                        user_query, relevant_schemas, tenant_code, ""
+                    )
                     if fallback_query != sql_query:
                         print(f"Fallback SQL: {fallback_query}")
-                        success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(fallback_query)
+                        success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(
+                            fallback_query, tenant_code, session_id
+                        )
                         if success:
                             sql_query = fallback_query  # Update for final response
             

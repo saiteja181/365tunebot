@@ -113,18 +113,34 @@ class SchemaProcessor:
         for schema in self.schema_data:
             if schema['table_name'] == table_name:
                 table_info = schema['schema_info']
+
+                # Get column names for header
+                column_names = [col['column_name'] for col in table_info['columns']]
+
+                # Format detailed columns
                 columns_detail = []
                 for col in table_info['columns']:
                     if col['data_type'] and col['data_type'] != 'string':
                         col_text = f"  - {col['column_name']} ({col['data_type']})"
                     else:
                         col_text = f"  - {col['column_name']}"
-                    
+
                     if col['description']:
-                        col_text += f": {col['description']}"
+                        # Truncate long descriptions
+                        desc = col['description']
+                        if len(desc) > 150:
+                            desc = desc[:150] + "..."
+                        col_text += f": {desc}"
                     columns_detail.append(col_text)
-                
-                return f"Table: {table_name}\nColumns:\n" + "\n".join(columns_detail)
+
+                # Create a clear header showing available columns
+                header = f"Table: {table_name}\n"
+                header += f"Available Columns: {', '.join(column_names[:20])}"
+                if len(column_names) > 20:
+                    header += f"... (and {len(column_names) - 20} more)"
+                header += "\n\nDetailed Column Information:\n"
+
+                return header + "\n".join(columns_detail)
         return f"Table: {table_name} (schema not found)"
     
     def save_processed_data(self, output_file: str):

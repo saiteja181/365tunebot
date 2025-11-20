@@ -26,6 +26,61 @@ try:
 except ImportError as e:
     print(f"Warning: Could not import TextToSQLSystem: {e}")
     SYSTEM_AVAILABLE = False
+    # Define dummy class to avoid NameError in type hints
+    class TextToSQLSystem:
+        pass
+
+# Import tenant security
+try:
+    from tenant_security import audit_logger, TenantSecurityException
+    TENANT_SECURITY_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import tenant security: {e}")
+    TENANT_SECURITY_AVAILABLE = False
+
+# Import AI Insights
+try:
+    from ai_insights import AIInsightsGenerator
+    INSIGHTS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import AIInsightsGenerator: {e}")
+    INSIGHTS_AVAILABLE = False
+
+# Import Enhanced AI Insights
+try:
+    from enhanced_ai_insights import EnhancedAIInsights
+    ENHANCED_INSIGHTS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import EnhancedAIInsights: {e}")
+    ENHANCED_INSIGHTS_AVAILABLE = False
+
+# Import Comprehensive Scoring
+try:
+    from comprehensive_scoring import ComprehensiveTenantScoring
+    COMPREHENSIVE_SCORING_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import ComprehensiveTenantScoring: {e}")
+    COMPREHENSIVE_SCORING_AVAILABLE = False
+
+# Import Advisory Mode (NEW EXTENSION)
+try:
+    from advisory_mode import AdvisoryModeHandler
+    ADVISORY_MODE_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import AdvisoryModeHandler: {e}")
+    ADVISORY_MODE_AVAILABLE = False
+    class AdvisoryModeHandler:
+        pass
+
+# Import Schema Manager (NEW EXTENSION)
+try:
+    from schema_manager import SchemaManager
+    SCHEMA_MANAGER_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import SchemaManager: {e}")
+    SCHEMA_MANAGER_AVAILABLE = False
+    class SchemaManager:
+        pass
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -50,9 +105,16 @@ system_lock = threading.Lock()
 dashboard_cache = {}
 cache_timestamp = None
 
+# TENANT SECURITY: Your tenant code (in production, get from authentication)
+DEFAULT_TENANT_CODE = "6c657194-e896-4367-a285-478e3ef159b6"
+
 # Conversation memory storage - stores last 6 exchanges per session
 conversation_memory = {}
 memory_lock = threading.Lock()
+
+# NEW EXTENSIONS: Advisory Mode and Schema Manager
+advisory_handler: Optional[AdvisoryModeHandler] = None
+schema_manager: Optional[SchemaManager] = None
 
 class ConversationEntry:
     def __init__(self, user_message: str, bot_response: str, timestamp: datetime):
@@ -164,6 +226,7 @@ class QueryResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+    tenant_code: Optional[str] = None  # Frontend provides tenant code
 
 class ChatResponse(BaseModel):
     success: bool
@@ -176,34 +239,46 @@ class ChatResponse(BaseModel):
 
 def initialize_system_threadsafe():
     """Thread-safe system initialization"""
-    global system, system_initialized
-    
+    global system, system_initialized, advisory_handler, schema_manager
+
     with system_lock:
         if system_initialized:
             return True
-            
+
         if not SYSTEM_AVAILABLE:
             print("TextToSQLSystem not available")
             return False
-        
+
         try:
             print("Initializing TextToSQLSystem (this may take a moment)...")
             system = TextToSQLSystem()
             csv_file = "enhanced_db_schema.csv"
-            
+
             if not os.path.exists(csv_file):
                 print(f"Warning: CSV file not found: {csv_file}")
                 return False
-            
+
             success = system.initialize_system(csv_file)
             if not success:
                 print("Failed to initialize TextToSQLSystem")
                 return False
-            
+
+            # DISABLED: Advisory Mode and Schema Manager
+            # Uncomment below to re-enable these features
+            # if ADVISORY_MODE_AVAILABLE and advisory_handler is None:
+            #     print("Initializing Advisory Mode Handler...")
+            #     advisory_handler = AdvisoryModeHandler(text_to_sql_system=system)
+            #     print("Advisory Mode Handler initialized!")
+            #
+            # if SCHEMA_MANAGER_AVAILABLE and schema_manager is None:
+            #     print("Initializing Schema Manager...")
+            #     schema_manager = SchemaManager()
+            #     print("Schema Manager initialized!")
+
             system_initialized = True
             print("TextToSQLSystem initialized successfully!")
             return True
-            
+
         except Exception as e:
             print(f"Error initializing TextToSQLSystem: {str(e)}")
             system = None
@@ -217,34 +292,45 @@ def ensure_system_ready():
         return initialize_system_threadsafe()
     return True
 
-def load_dashboard_data_real():
-    """Load dashboard data using the same logic as Streamlit"""
+def load_dashboard_data_real(tenant_code: Optional[str] = None):
+    """Load dashboard data using the same logic as Streamlit with SIMPLE MULTI-TENANT SUPPORT"""
     global dashboard_cache, cache_timestamp
-    
-    # Cache for 5 minutes
-    if cache_timestamp and (time.time() - cache_timestamp) < 300 and dashboard_cache:
-        return dashboard_cache
-    
+
+    # SIMPLE MULTI-TENANT: Use provided tenant_code or default
+    if not tenant_code:
+        tenant_code = DEFAULT_TENANT_CODE
+
+    print(f"[MULTI-TENANT] Loading dashboard for tenant: {tenant_code}")
+
+    # Cache for 5 minutes (per tenant)
+    cache_key = f"{tenant_code}_dashboard"
+    if cache_timestamp and (time.time() - cache_timestamp) < 300 and dashboard_cache.get(cache_key):
+        print(f"[CACHE] Returning cached dashboard data for tenant: {tenant_code}")
+        return dashboard_cache[cache_key]
+
     if not ensure_system_ready() or not system:
         return get_fallback_dashboard_data()
-    
+
     try:
         dashboard_data = {}
-        
-        # Basic Statistics (same as Streamlit)
+
+        # Basic Statistics with TENANT FILTERING
         basic_queries = [
-            ("Total Users", "SELECT COUNT(*) as count FROM UserRecords"),
-            ("Active Users", "SELECT COUNT(*) as count FROM UserRecords WHERE AccountStatus = 'Active'"),
-            ("Licensed Users", "SELECT COUNT(*) as count FROM UserRecords WHERE IsLicensed = 1"),
-            ("Countries", "SELECT COUNT(DISTINCT Country) as count FROM UserRecords WHERE Country IS NOT NULL"),
-            ("Inactive Users", "SELECT COUNT(*) as count FROM UserRecords WHERE AccountStatus != 'Active'"),
-            ("Guest Users", "SELECT COUNT(*) as count FROM UserRecords WHERE UserType = 'Guest'"),
-            ("Admin Users", "SELECT COUNT(*) as count FROM UserRecords WHERE IsAdmin = 1"),
+            ("Total Users", f"SELECT COUNT(*) as count FROM UserRecords WHERE TenantCode = '{tenant_code}'"),
+            ("Active Users", f"SELECT COUNT(*) as count FROM UserRecords WHERE TenantCode = '{tenant_code}' AND AccountEnabled = 1"),
+            ("Licensed Users", f"SELECT COUNT(*) as count FROM UserRecords WHERE TenantCode = '{tenant_code}' AND IsLicensed = 1"),
+            ("Countries", f"SELECT COUNT(DISTINCT Country) as count FROM UserRecords WHERE TenantCode = '{tenant_code}' AND Country IS NOT NULL"),
+            ("Inactive Users", f"SELECT COUNT(*) as count FROM UserRecords WHERE TenantCode = '{tenant_code}' AND AccountEnabled = 0"),
+            ("Guest Users", f"SELECT COUNT(*) as count FROM UserRecords WHERE TenantCode = '{tenant_code}' AND UserType = 'Guest'"),
+            ("Admin Users", f"SELECT COUNT(*) as count FROM UserRecords WHERE TenantCode = '{tenant_code}' AND IsAdmin = 1"),
         ]
         
         for label, query in basic_queries:
             try:
-                success, result, execution_info = system.sql_executor.execute_query(query)
+                # TENANT SECURITY: Execute with tenant code
+                success, result, execution_info = system.sql_executor.execute_query_secure(
+                    query, tenant_code, "dashboard"
+                )
                 if success and result and len(result) > 0 and 'count' in result[0]:
                     dashboard_data[label] = result[0]['count']
                 else:
@@ -253,42 +339,44 @@ def load_dashboard_data_real():
                 print(f"Error executing query for {label}: {e}")
                 dashboard_data[label] = 0
         
-        # Advanced Analytics Queries (same as Streamlit)
+        # Advanced Analytics Queries with TENANT FILTERING
         analytics_queries = {
-            'Countries_Data': """
-                SELECT TOP 15 Country, COUNT(*) as UserCount, 
-                       SUM(CASE WHEN AccountStatus = 'Active' THEN 1 ELSE 0 END) as ActiveUsers,
+            'Countries_Data': f"""
+                SELECT TOP 15 Country, COUNT(*) as UserCount,
+                       SUM(CASE WHEN AccountEnabled = 1 THEN 1 ELSE 0 END) as ActiveUsers,
                        SUM(CASE WHEN IsLicensed = 1 THEN 1 ELSE 0 END) as LicensedUsers
-                FROM UserRecords 
-                WHERE Country IS NOT NULL 
-                GROUP BY Country 
+                FROM UserRecords
+                WHERE TenantCode = '{tenant_code}' AND Country IS NOT NULL
+                GROUP BY Country
                 ORDER BY UserCount DESC
             """,
-            
-            'Departments_Data': """
+
+            'Departments_Data': f"""
                 SELECT TOP 15 Department, COUNT(*) as UserCount,
-                       SUM(CASE WHEN AccountStatus = 'Active' THEN 1 ELSE 0 END) as ActiveUsers,
+                       SUM(CASE WHEN AccountEnabled = 1 THEN 1 ELSE 0 END) as ActiveUsers,
                        AVG(CAST(EmailSent_D30 as FLOAT)) as AvgEmailsSent30D
-                FROM UserRecords 
-                WHERE Department IS NOT NULL 
-                GROUP BY Department 
+                FROM UserRecords
+                WHERE TenantCode = '{tenant_code}' AND Department IS NOT NULL
+                GROUP BY Department
                 ORDER BY UserCount DESC
             """,
-            
-            'License_Analysis': """
-                SELECT l.Name as LicenseName, l.TotalUnits, l.ConsumedUnits, 
+
+            'License_Analysis': f"""
+                SELECT l.Name as LicenseName, l.TotalUnits, l.ConsumedUnits,
                        l.ActualCost, l.Status,
                        (CAST(l.ConsumedUnits as FLOAT) / NULLIF(l.TotalUnits, 0) * 100) as UtilizationPercent
                 FROM Licenses l
-                WHERE l.TotalUnits > 0
+                WHERE l.TenantCode = '{tenant_code}' AND l.TotalUnits > 0
                 ORDER BY l.ActualCost DESC
             """
         }
         
-        # Execute analytics queries
+        # Execute analytics queries with TENANT SECURITY
         for key, query in analytics_queries.items():
             try:
-                success, result, execution_info = system.sql_executor.execute_query(query)
+                success, result, execution_info = system.sql_executor.execute_query_secure(
+                    query, tenant_code, "dashboard"
+                )
                 if success and result:
                     # Clean result data
                     clean_result = []
@@ -313,11 +401,11 @@ def load_dashboard_data_real():
             except Exception as e:
                 print(f"Error executing {key}: {e}")
                 dashboard_data[key] = []
-        
-        # Cache the results
-        dashboard_cache = dashboard_data
+
+        # Cache the results (per tenant)
+        dashboard_cache[cache_key] = dashboard_data
         cache_timestamp = time.time()
-        
+
         return dashboard_data
         
     except Exception as e:
@@ -383,9 +471,12 @@ async def root():
         "endpoints": [
             "/docs",
             "/api/query",
-            "/api/chat", 
+            "/api/chat",
             "/api/dashboard",
             "/api/licenses",
+            "/api/insights",
+            "/api/insights/enhanced",
+            "/api/scoring/comprehensive",
             "/api/chart/countries",
             "/api/chart/departments"
         ]
@@ -402,12 +493,12 @@ async def health_check():
     }
 
 @app.post("/api/query", response_model=QueryResponse)
-async def process_query(request: QueryRequest, conversation_context: str = ""):
-    """Process natural language query using real TextToSQLSystem"""
-    
+async def process_query(request: QueryRequest, conversation_context: str = "", session_id: str = "default", tenant_code: str = None):
+    """Process natural language query using real TextToSQLSystem with dynamic multi-tenant support"""
+
     try:
         start_time = time.time()
-        
+
         if not ensure_system_ready() or not system:
             # Fallback response
             processing_time = time.time() - start_time
@@ -418,9 +509,15 @@ async def process_query(request: QueryRequest, conversation_context: str = ""):
                 final_answer="System not available. Please try again later.",
                 error="TextToSQLSystem not initialized"
             )
-        
-        # Use the real system with conversation context if provided
-        result = system.process_query(request.query, conversation_context)
+
+        # DYNAMIC TENANT: Use provided tenant code or default
+        if tenant_code is None:
+            tenant_code = DEFAULT_TENANT_CODE
+
+        print(f"[MULTI-TENANT] Processing query for tenant: {tenant_code}")
+
+        # Use the real system with conversation context, session_id, and DYNAMIC TENANT CODE
+        result = system.process_query(request.query, conversation_context, session_id=session_id, tenant_code=tenant_code)
         processing_time = time.time() - start_time
         
         if "error" in result:
@@ -489,15 +586,12 @@ async def process_query(request: QueryRequest, conversation_context: str = ""):
         )
 
 @app.get("/api/dashboard")
-async def get_dashboard_data():
-    """Get comprehensive dashboard metrics using real data"""
-    
+async def get_dashboard_data(tenant_code: Optional[str] = None):
+    """Get comprehensive dashboard metrics using real data with simple multi-tenant support"""
+
     try:
-        # Use cached data if available and fresh (less than 5 minutes old)
-        if cache_timestamp and (time.time() - cache_timestamp) < 300 and dashboard_cache:
-            dashboard_data = dashboard_cache
-        else:
-            dashboard_data = load_dashboard_data_real()
+        # SIMPLE MULTI-TENANT: Load dashboard data with tenant_code parameter
+        dashboard_data = load_dashboard_data_real(tenant_code)
         
         return {
             "success": True,
@@ -518,15 +612,12 @@ async def get_dashboard_data():
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 @app.get("/api/chart/{chart_type}")
-async def get_chart_data(chart_type: str):
-    """Get data for charts using real data"""
-    
+async def get_chart_data(chart_type: str, tenant_code: Optional[str] = None):
+    """Get data for charts using real data with simple multi-tenant support"""
+
     try:
-        # Use cached data if available and fresh
-        if cache_timestamp and (time.time() - cache_timestamp) < 300 and dashboard_cache:
-            dashboard_data = dashboard_cache
-        else:
-            dashboard_data = load_dashboard_data_real()
+        # SIMPLE MULTI-TENANT: Load chart data with tenant_code parameter
+        dashboard_data = load_dashboard_data_real(tenant_code)
         
         if chart_type == "countries":
             result = dashboard_data.get('Countries_Data', [])
@@ -568,25 +659,62 @@ async def get_chart_data(chart_type: str):
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_with_bot(request: ChatRequest):
-    """Enhanced chatbot endpoint using real system"""
-    
+    """Enhanced chatbot endpoint using real system with multi-tenant support"""
+
     try:
         start_time = time.time()
         session_id = request.session_id or str(uuid.uuid4())
         message_lower = request.message.lower()
-        
+
+        # Ensure system is ready
+        if not ensure_system_ready():
+            return ChatResponse(
+                success=False,
+                message="System is initializing. Please try again in a moment.",
+                processing_time=time.time() - start_time,
+                session_id=session_id,
+                error="System not ready"
+            )
+
+        # SIMPLE MULTI-TENANT: Use tenant_code from request or default
+        tenant_code = request.tenant_code or DEFAULT_TENANT_CODE
+        print(f"[MULTI-TENANT] Processing chat for tenant: {tenant_code}")
+
+        # ADVISORY MODE DISABLED - Uncomment below to re-enable
+        # if ADVISORY_MODE_AVAILABLE and advisory_handler:
+        #     if advisory_handler.should_enter_advisory_mode(request.message, session_id):
+        #         print(f"Advisory Mode activated for session {session_id}")
+        #         advisory_response = await advisory_handler.handle_advisory_query(
+        #             request.message,
+        #             session_id
+        #         )
+        #         add_to_conversation_memory(
+        #             session_id,
+        #             request.message,
+        #             advisory_response.get('message', '')
+        #         )
+        #         return ChatResponse(
+        #             success=advisory_response.get('success', True),
+        #             message=advisory_response.get('message', ''),
+        #             processing_time=advisory_response.get('processing_time', time.time() - start_time),
+        #             result_count=advisory_response.get('opportunities_count', 0),
+        #             session_id=session_id,
+        #             results=advisory_response.get('results', [])
+        #         )
+
+        # Standard text-to-SQL mode
         # Only respond with greeting for very simple greetings, not questions containing greeting words
         if request.message.strip().lower() in ["hello", "hi", "hey", "hello there", "hi there"]:
             message = "Hello! I'm the 365 Tune Bot. I can help you analyze your Microsoft 365 data with natural language queries. Ask me anything about users, departments, countries, or licenses!"
             processing_time = time.time() - start_time
-            
+
             return ChatResponse(
                 success=True,
                 message=message,
                 processing_time=processing_time,
                 session_id=session_id
             )
-        
+
         elif "help" in message_lower:
             message = """I can help you with queries like:
             - 'How many users are there?'
@@ -594,17 +722,17 @@ async def chat_with_bot(request: ChatRequest):
             - 'List users by department'
             - 'Which countries have the most users?'
             - 'How many licensed users do we have?'
-            
+
             Just ask your question in natural language!"""
             processing_time = time.time() - start_time
-            
+
             return ChatResponse(
                 success=True,
                 message=message,
                 processing_time=processing_time,
                 session_id=session_id
             )
-        
+
         else:
             try:
                 # Get conversation context for this session
@@ -613,9 +741,9 @@ async def chat_with_bot(request: ChatRequest):
                 if context:
                     print(f"Using conversation context (last {len(conversation_memory.get(session_id, []))} exchanges)")
                     print(f"Context preview: {context[:100]}...")
-                
-                # Process query with conversation context
-                query_result = await process_query(QueryRequest(query=request.message), context)
+
+                # DYNAMIC TENANT: Process query with dynamic tenant code
+                query_result = await process_query(QueryRequest(query=request.message), context, session_id, tenant_code)
                 processing_time = time.time() - start_time
                 
                 print(f"Query result success: {query_result.success}")
@@ -714,11 +842,100 @@ async def list_active_sessions():
                 })
         return {"active_sessions": len(sessions), "sessions": sessions}
 
-@app.get("/api/licenses")
-async def get_license_data():
-    """Get license data and metrics"""
-    
+@app.get("/api/insights")
+async def get_ai_insights():
+    """Get AI-powered insights about license usage, costs, and optimization opportunities"""
+
     try:
+        if not INSIGHTS_AVAILABLE:
+            return {
+                "success": False,
+                "error": "AI Insights module not available"
+            }
+
+        print("Generating AI insights...")
+        insights_generator = AIInsightsGenerator()
+        result = insights_generator.generate_insights()
+
+        print(f"Insights generated successfully: {result.get('success', False)}")
+        return result
+
+    except Exception as e:
+        print(f"Error generating insights: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.get("/api/insights/enhanced")
+async def get_enhanced_ai_insights():
+    """Get enhanced AI-powered insights with anomaly detection, priority ranking, and advanced analytics"""
+
+    try:
+        if not ENHANCED_INSIGHTS_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Enhanced AI Insights module not available"
+            }
+
+        print("Generating enhanced AI insights...")
+        insights_generator = EnhancedAIInsights()
+        result = insights_generator.generate_insights()
+
+        print(f"Enhanced insights generated successfully: {result.get('success', False)}")
+        return result
+
+    except Exception as e:
+        print(f"Error generating enhanced insights: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.get("/api/scoring/comprehensive")
+async def get_comprehensive_scoring():
+    """Get comprehensive tenant security & compliance scoring"""
+
+    try:
+        if not COMPREHENSIVE_SCORING_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Comprehensive Scoring module not available"
+            }
+
+        print("Generating comprehensive tenant scoring...")
+        scorer = ComprehensiveTenantScoring()
+        result = scorer.generate_comprehensive_score()
+
+        print(f"Comprehensive scoring completed: {result.get('success', False)}")
+        if result.get('success'):
+            print(f"Overall Score: {result.get('overall_score', 0)}/100")
+            print(f"Maturity Level: {result.get('maturity_level', {}).get('name', 'Unknown')}")
+
+        return result
+
+    except Exception as e:
+        print(f"Error generating comprehensive scoring: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.get("/api/licenses")
+async def get_license_data(tenant_code: Optional[str] = None):
+    """Get license data and metrics with simple multi-tenant support"""
+
+    try:
+        # SIMPLE MULTI-TENANT: Use tenant_code parameter or default
+        if not tenant_code:
+            tenant_code = DEFAULT_TENANT_CODE
+
+        print(f"[MULTI-TENANT] Loading licenses for tenant: {tenant_code}")
+
         if not ensure_system_ready() or not system:
             # Fallback data
             return {
@@ -733,7 +950,7 @@ async def get_license_data():
                         "status": "Active"
                     },
                     {
-                        "license_name": "Microsoft 365 E1", 
+                        "license_name": "Microsoft 365 E1",
                         "total_units": 300,
                         "consumed_units": 210,
                         "actual_cost": 8.50,
@@ -743,17 +960,21 @@ async def get_license_data():
                 ],
                 "source": "Fallback"
             }
-        
-        query = """
-            SELECT l.Name as LicenseName, l.TotalUnits, l.ConsumedUnits, 
+
+        # TENANT FILTERING in query
+        query = f"""
+            SELECT l.Name as LicenseName, l.TotalUnits, l.ConsumedUnits,
                    l.ActualCost, l.Status,
                    (CAST(l.ConsumedUnits as FLOAT) / NULLIF(l.TotalUnits, 0) * 100) as UtilizationPercent
             FROM Licenses l
-            WHERE l.TotalUnits > 0
+            WHERE l.TenantCode = '{tenant_code}' AND l.TotalUnits > 0
             ORDER BY l.ActualCost DESC
         """
-        
-        success, result, execution_info = system.sql_executor.execute_query(query)
+
+        # TENANT SECURITY: Execute with tenant code
+        success, result, execution_info = system.sql_executor.execute_query_secure(
+            query, tenant_code, "licenses"
+        )
         if success and result:
             licenses = []
             for row in result:
@@ -804,6 +1025,202 @@ async def get_license_data():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+# ============================================================================
+# NEW EXTENSION: SCHEMA MANAGEMENT ENDPOINTS
+# ============================================================================
+
+class SchemaTableRequest(BaseModel):
+    table_name: str
+    description: str
+    business_context: Optional[str] = ""
+    tags: Optional[List[str]] = []
+
+class SchemaColumnRequest(BaseModel):
+    table_name: str
+    column_name: str
+    description: str
+    data_type: Optional[str] = ""
+    example_values: Optional[str] = ""
+    business_rules: Optional[str] = ""
+
+@app.get("/api/schema/tables")
+async def get_all_tables():
+    """Get all tables with custom descriptions"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        tables = schema_manager.get_all_tables()
+        stats = schema_manager.get_statistics()
+        return {
+            "success": True,
+            "tables": tables,
+            "statistics": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.get("/api/schema/tables/{table_name}")
+async def get_table_details(table_name: str):
+    """Get detailed information about a specific table"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        table = schema_manager.get_table_description(table_name)
+        if not table:
+            raise HTTPException(status_code=404, detail=f"Table {table_name} not found")
+
+        columns = schema_manager.get_all_columns(table_name)
+        return {
+            "success": True,
+            "table": table,
+            "columns": columns
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/api/schema/tables")
+async def add_or_update_table(request: SchemaTableRequest):
+    """Add or update table description"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        result = schema_manager.add_table_description(
+            table_name=request.table_name,
+            description=request.description,
+            business_context=request.business_context or "",
+            tags=request.tags or []
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/api/schema/columns")
+async def add_or_update_column(request: SchemaColumnRequest):
+    """Add or update column description"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        result = schema_manager.add_column_description(
+            table_name=request.table_name,
+            column_name=request.column_name,
+            description=request.description,
+            data_type=request.data_type or "",
+            example_values=request.example_values or "",
+            business_rules=request.business_rules or ""
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.delete("/api/schema/tables/{table_name}")
+async def delete_table(table_name: str):
+    """Delete a table and all its columns"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        result = schema_manager.delete_table(table_name)
+        if not result["success"]:
+            raise HTTPException(status_code=404, detail=result["message"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.delete("/api/schema/columns/{table_name}/{column_name}")
+async def delete_column(table_name: str, column_name: str):
+    """Delete a specific column"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        result = schema_manager.delete_column(table_name, column_name)
+        if not result["success"]:
+            raise HTTPException(status_code=404, detail=result["message"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.get("/api/schema/search")
+async def search_schema(q: str):
+    """Search for tables and columns matching a search term"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        if not q or len(q) < 2:
+            raise HTTPException(status_code=400, detail="Search query must be at least 2 characters")
+
+        results = schema_manager.search_descriptions(q)
+        return {
+            "success": True,
+            "query": q,
+            "results": results
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.get("/api/schema/export/csv")
+async def export_schema_csv():
+    """Export all schema descriptions to CSV"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        result = schema_manager.export_to_csv()
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["message"])
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/api/schema/import/csv")
+async def import_schema_csv(csv_file_path: str):
+    """Import schema descriptions from CSV file"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        if not os.path.exists(csv_file_path):
+            raise HTTPException(status_code=404, detail=f"CSV file not found: {csv_file_path}")
+
+        result = schema_manager.import_from_csv(csv_file_path)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.get("/api/schema/statistics")
+async def get_schema_statistics():
+    """Get statistics about custom schema descriptions"""
+    if not SCHEMA_MANAGER_AVAILABLE or not schema_manager:
+        raise HTTPException(status_code=503, detail="Schema Manager not available")
+
+    try:
+        stats = schema_manager.get_statistics()
+        return {
+            "success": True,
+            "statistics": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+# ============================================================================
+# END OF SCHEMA MANAGEMENT ENDPOINTS
+# ============================================================================
 
 if __name__ == "__main__":
     print("Starting 365 Tune Bot FastAPI with Real Data...")

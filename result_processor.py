@@ -4,21 +4,7 @@ import json
 
 class ResultProcessor:
     def __init__(self):
-        self.system_prompt = """You are a helpful assistant that converts SQL query results into natural language responses. 
-
-Given:
-1. The original user question
-2. The SQL query that was executed
-3. The results from the database
-
-Your task is to:
-1. Analyze the results and provide a clear, natural language answer to the user's question
-2. Include relevant data points and insights from the results
-3. If the results are empty, explain that clearly
-4. Be concise but informative
-5. Use proper formatting for numbers, dates, and lists when appropriate
-
-Do not include the SQL query or raw data in your response unless specifically requested. Focus on answering the user's question directly."""
+        self.system_prompt = """Convert SQL results to concise natural language. State facts only. No suggestions, tips, or questions. Be brief."""
 
     def process_results_to_text(self, user_query: str, sql_query: str, results: List[Dict], execution_info: str) -> str:
         """Convert SQL results to natural language response with enhanced analysis"""
@@ -48,6 +34,10 @@ Do not include the SQL query or raw data in your response unless specifically re
         
         # Enhanced key columns based on query context
         key_columns = ['DisplayName', 'Mail', 'Department', 'Country', 'AccountStatus', 'UserType', 'IsLicensed', 'LastSignInDateTime']
+
+        # Check if this is a cost-related query
+        is_cost_query = any(word in query_lower for word in ['cost', 'spend', 'expensive', 'price', 'budget', 'financial'])
+        cost_columns = ['TotalCost', 'EffectiveCost', 'TotalSpent', 'CostPerUser', 'AvgCost', 'ActualCost', 'PartnerCost']
         
         # Add contextual columns based on query
         if 'license' in query_lower:
@@ -73,22 +63,14 @@ Do not include the SQL query or raw data in your response unless specifically re
         # Use actual count for count queries, otherwise use row count
         display_count = actual_count if actual_count is not None else total_rows
         
-        # Give AI access to the actual SQL results for intelligent analysis
-        sql_results_preview = json.dumps(results[:3], indent=1, default=str) if results else "[]"
-        
-        prompt = f"""User asked: "{user_query}"
+        # Give AI access to the actual SQL results - limit to 2 rows for speed
+        sql_results_preview = json.dumps(results[:2], default=str) if results else "[]"
 
-SQL executed: {sql_query}
-SQL returned {len(results)} rows with these results:
-{sql_results_preview}
+        prompt = f"""Question: {user_query}
+Results: {sql_results_preview}
+Total rows: {len(results)}
 
-Based on the SQL results above, provide a natural, conversational answer to the user's question. 
-
-If this is a count query, extract the actual count from the SQL results and mention it.
-If this shows user data, mention relevant details like names, departments, countries.
-Be helpful and suggest follow-up questions when appropriate.
-
-Response:"""
+Describe the results briefly. No suggestions."""
         
         try:
             print("Step 4: Processing results with enhanced AI analysis...")
@@ -127,20 +109,18 @@ Response:"""
     def _create_fallback_response(self, user_query: str, results: List[Dict]) -> str:
         """Create a conversational response when AI processing fails"""
         if not results:
-            return f"I couldn't find any results for your query: '{user_query}'. You might want to try rephrasing your question or checking if the data exists."
-        
+            return f"No results found for your query: '{user_query}'."
+
         total_rows = len(results)
-        
+
         # Create a conversational summary
-        response = f"I found {total_rows:,} result{'s' if total_rows != 1 else ''} for your query: '{user_query}'.\n\n"
-        
+        response = f"Found {total_rows:,} result{'s' if total_rows != 1 else ''}.\n\n"
+
         # Show key information from first few results in a readable format
         if total_rows > 0:
-            response += "Here are some highlights from the results:\n\n"
-            
             for i, row in enumerate(results[:3], 1):
                 response += f"Record {i}:\n"
-                
+
                 # Show most relevant fields in a user-friendly way
                 if 'DisplayName' in row and row['DisplayName']:
                     response += f"   - Name: {row['DisplayName']}\n"
@@ -152,14 +132,12 @@ Response:"""
                     response += f"   - Country: {row['Country']}\n"
                 if 'AccountStatus' in row and row['AccountStatus']:
                     response += f"   - Status: {row['AccountStatus']}\n"
-                
+
                 response += "\n"
-        
+
         if total_rows > 3:
-            response += f"... and {total_rows - 3:,} more record{'s' if total_rows - 3 != 1 else ''}.\n\n"
-        
-        response += "TIP: For more detailed information, you can ask me specific questions about these results!"
-        
+            response += f"... and {total_rows - 3:,} more record{'s' if total_rows - 3 != 1 else ''}."
+
         return response
     
     def _analyze_results_patterns(self, results: List[Dict], query_lower: str) -> str:
@@ -209,29 +187,17 @@ Response:"""
     
     def _enhance_response_formatting(self, response: str, total_rows: int, query_lower: str) -> str:
         """Enhance response formatting for better readability"""
-        # Add indicators for better visual appeal
-        if 'found' in response.lower() and total_rows > 0:
-            if total_rows > 100:
-                response = "RESULTS: " + response
-            elif total_rows > 10:
-                response = "DATA: " + response
-            else:
-                response = "INFO: " + response
-        
-        # Add helpful context based on query type
-        if any(word in query_lower for word in ['list', 'show', 'display']) and total_rows > 5:
-            response += f"\n\nTIP: This shows a sample of the {total_rows:,} results. Ask for more specific criteria to narrow down the list."
-        
+        # Just return the response as-is, no additional formatting needed
         return response
     
     def _create_enhanced_fallback_response(self, user_query: str, results: List[Dict], data_insights: str) -> str:
         """Create an enhanced conversational response when AI processing fails"""
         if not results:
-            return f"I couldn't find any results for your query: '{user_query}'. You might want to try rephrasing your question or checking if the data exists."
-        
+            return f"No results found for your query: '{user_query}'."
+
         total_rows = len(results)
         query_lower = user_query.lower()
-        
+
         # Extract actual count/aggregate values for count queries
         actual_count = None
         is_count_query = any(word in query_lower for word in ['how many', 'count', 'number of'])
@@ -243,82 +209,74 @@ Response:"""
                     if isinstance(value, (int, float)):
                         actual_count = int(value)
                         break
-        
+
         # Use actual count for count queries, otherwise use row count
         display_count = actual_count if actual_count is not None else total_rows
-        
+
         # Analyze query context for smarter responses
         if 'india' in query_lower and any(word in query_lower for word in ['how many', 'count', 'users']):
             if actual_count is not None:
                 if actual_count == 1:
-                    response = f"I found {actual_count} user in India in your Microsoft 365 tenant."
+                    response = f"Found {actual_count} user in India."
                     # Get specific details about that user
                     user = results[0]
                     if 'DisplayName' in user and user['DisplayName']:
-                        response += f" The user is **{user['DisplayName']}**"
+                        response += f" The user is {user['DisplayName']}"
                         if 'Department' in user and user['Department']:
-                            response += f" from the **{user['Department']}** department"
+                            response += f" from the {user['Department']} department"
                         response += "."
-                    response += "\n\nSince there's just one user in India, you might want to:"
-                    response += "\n- Check their activity and license usage"
-                    response += "\n- See their role and permissions"  
-                    response += "\n- View their recent sign-in activity"
                 else:
-                    response = f"I found {actual_count:,} users in India in your Microsoft 365 tenant."
+                    response = f"Found {actual_count:,} users in India."
             else:
-                response = f"I found {total_rows:,} users in India in your Microsoft 365 tenant."
+                response = f"Found {total_rows:,} users in India."
         elif any(word in query_lower for word in ['how many', 'count']):
             entity = "records"
             if 'user' in query_lower:
                 entity = "users"
             elif 'license' in query_lower:
                 entity = "licenses"
-            response = f"I found {display_count:,} {entity} matching your query."
+            response = f"Found {display_count:,} {entity}."
         elif any(word in query_lower for word in ['list', 'show', 'display']):
-            response = f"Here are the {total_rows:,} results I found for '{user_query}':"
+            response = f"Found {total_rows:,} results:"
         else:
-            response = f"Based on your query '{user_query}', I found {display_count:,} relevant results."
-        
-        # Add insights
-        if data_insights and data_insights != "Standard user data analysis":
-            response += f"\n\n**Key insights:** {data_insights}"
-        
+            response = f"Found {display_count:,} results."
+
         # Show meaningful examples
-        if total_rows > 0:
-            response += "\n\n**Sample results:**"
-            
+        if total_rows > 0 and total_rows <= 3:
+            response += "\n\n"
+
             for i, row in enumerate(results[:3], 1):
-                response += f"\n\n**Record {i}:**"
-                
+                response += f"\nRecord {i}:\n"
+
                 # Show most relevant fields in a user-friendly way
                 if 'DisplayName' in row and row['DisplayName']:
-                    response += f"\n   - **Name:** {row['DisplayName']}"
+                    response += f"   - Name: {row['DisplayName']}\n"
                 if 'Department' in row and row['Department']:
-                    response += f"\n   - **Department:** {row['Department']}"
+                    response += f"   - Department: {row['Department']}\n"
                 if 'Country' in row and row['Country']:
-                    response += f"\n   - **Location:** {row['Country']}"
+                    response += f"   - Location: {row['Country']}\n"
                 if 'Mail' in row and row['Mail']:
-                    response += f"\n   - **Email:** {row['Mail']}"
+                    response += f"   - Email: {row['Mail']}\n"
                 if 'AccountStatus' in row and row['AccountStatus']:
-                    response += f"\n   - **Status:** {row['AccountStatus']}"
-        
-        if total_rows > 3:
-            response += f"\n\n... and **{total_rows - 3:,}** more results."
-        
-        # Add contextual helpful suggestions
-        if 'india' in query_lower and total_rows == 1:
-            response += "\n\n**You can ask me:**"
-            response += "\n- 'What department is the India user in?'"
-            response += "\n- 'When did the India user last sign in?'"
-            response += "\n- 'What licenses does the India user have?'"
-        elif 'user' in query_lower:
-            response += "\n\n**Try asking:**"
-            response += "\n- 'Show me users by department'"
-            response += "\n- 'Which users are admins?'"
-            response += "\n- 'How many active users do we have?'"
-        else:
-            response += "\n\n**Tip:** Ask me more specific questions to get detailed insights!"
-        
+                    response += f"   - Status: {row['AccountStatus']}\n"
+        elif total_rows > 3:
+            response += f" (Showing first 3 of {total_rows:,})\n\n"
+
+            for i, row in enumerate(results[:3], 1):
+                response += f"\nRecord {i}:\n"
+
+                # Show most relevant fields in a user-friendly way
+                if 'DisplayName' in row and row['DisplayName']:
+                    response += f"   - Name: {row['DisplayName']}\n"
+                if 'Department' in row and row['Department']:
+                    response += f"   - Department: {row['Department']}\n"
+                if 'Country' in row and row['Country']:
+                    response += f"   - Location: {row['Country']}\n"
+                if 'Mail' in row and row['Mail']:
+                    response += f"   - Email: {row['Mail']}\n"
+                if 'AccountStatus' in row and row['AccountStatus']:
+                    response += f"   - Status: {row['AccountStatus']}\n"
+
         return response
     
     def create_summary_response(self, user_query: str, faiss_results: List[Dict], 
