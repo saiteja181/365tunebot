@@ -60,6 +60,8 @@ react-chart-app/dist/
 # Logs
 logs/
 *.log
+application.log
+tenant_security_audit.log
 
 # Runtime data
 pids/
@@ -91,8 +93,8 @@ pids/
 nul
 
 # Data files (optional - comment out if you want to include them)
-enhanced_db_schema.csv
-processed_schemas.json
+# Data schema is in data/ folder
+data/processed_schemas.json
 *.pkl
 *.idx
 finetune_training_data.jsonl

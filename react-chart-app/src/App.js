@@ -4,6 +4,8 @@ import ChartCard from './components/ChartCard';
 import ChatBot from './components/ChatBot';
 import ComprehensiveScoring from './components/ComprehensiveScoring';
 import EnhancedAIInsights from './components/EnhancedAIInsights';
+import CostForecasting from './components/CostForecasting';
+// SecurityScoreCard REMOVED - Using ComprehensiveScoring only (real database data)
 // import SchemaManager from './components/SchemaManager'; // DISABLED - Enable when needed
 import './App_v2.css';
 
@@ -94,11 +96,20 @@ function App() {
               Comprehensive security scoring and AI-powered insights for your Microsoft 365 environment
             </p>
 
-            {/* Security Scoring Section */}
+            {/* Cost Forecasting Section */}
+            <div className="analytics-section">
+              <div className="section-header">
+                <h3>Cost Analysis & Forecasting</h3>
+                <p>Historical cost analysis, monthly forecasts, and year-end projections</p>
+              </div>
+              <CostForecasting />
+            </div>
+
+            {/* Security Scoring Section - Uses REAL DATABASE DATA via ComprehensiveTenantScoring */}
             <div className="analytics-section">
               <div className="section-header">
                 <h3>Security & Compliance Score</h3>
-                <p>Real-time security posture analysis</p>
+                <p>Comprehensive security posture analysis from database</p>
               </div>
               <ComprehensiveScoring />
             </div>

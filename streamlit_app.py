@@ -336,7 +336,7 @@ def initialize_system():
     """Initialize the NLP system"""
     try:
         system = TextToSQLSystem()
-        csv_file = "enhanced_db_schema.csv"
+        csv_file = "data/enhanced_db_schema.csv"
         
         if not os.path.exists(csv_file):
             return None, f"CSV file not found: {csv_file}"

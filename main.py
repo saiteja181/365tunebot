@@ -32,9 +32,9 @@ class TextToSQLSystem:
         print("Initializing Text-to-SQL System...")
         
         # Check if we can load existing processed data
-        schema_file = "processed_schemas.json"
-        index_file = "faiss_index.idx"
-        metadata_file = "faiss_metadata.pkl"
+        schema_file = "data/processed_schemas.json"
+        index_file = "data/faiss_index.idx"
+        metadata_file = "data/faiss_metadata.pkl"
         
         if not force_rebuild and all(os.path.exists(f) for f in [schema_file, index_file, metadata_file]):
             print("Loading existing processed data...")
@@ -115,7 +115,7 @@ class TextToSQLSystem:
                 print(f"Using conversation context: {conversation_context[:100]}...")
 
             # Use optimized generation with conversation history and TENANT SECURITY
-            sql_query = self.sql_generator.generate_sql_query_secure(
+            sql_query, params = self.sql_generator.generate_sql_query_secure(
                 user_query, relevant_schemas, tenant_code, conversation_context, session_id=session_id
             )
 
@@ -127,9 +127,7 @@ class TextToSQLSystem:
             
             # Step 3: Execute SQL query with TENANT SECURITY
             print("\nStep 3: Executing SQL query...")
-            success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(
-                sql_query, tenant_code, session_id
-            )
+            success, results, execution_info, attempts = self.sql_executor.execute_query_with_retry(sql_query, tenant_code, session_id, params=params)
             
             if not success:
                 # Try to improve the query based on the error

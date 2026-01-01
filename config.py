@@ -1,17 +1,29 @@
 from openai import AzureOpenAI
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Azure OpenAI Configuration
-AZURE_ENDPOINT = "https://365tune-open-ai.openai.azure.com/"
-MODEL_NAME = "gpt-4o-mini-2024-07-18-ft-6948d064ebb7406ca4477f051eea39c1"
-DEPLOYMENT = "gpt-4o-mini-2024-07-18-ft-6948d064ebb7406ca4477f051eea39c1"
-SUBSCRIPTION_KEY = "Bqn1HNJdNQcyJC1vFJcFlT1s2hA4kBB4GaJMkIkbBrQ5b3qW7AL4JQQJ99BHACYeBjFXJ3w3AAABACOGa8Hk"
-API_VERSION = "2025-01-01-preview"
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://365tune-open-ai.openai.azure.com/")
+AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT  # Alias for compatibility with ai_mode_manager
+MODEL_NAME = os.getenv("AZURE_MODEL_NAME", "gpt-4o-mini-2024-07-18-ft-6948d064ebb7406ca4477f051eea39c1")
+DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4o-mini-2024-07-18-ft-6948d064ebb7406ca4477f051eea39c1")
+SUBSCRIPTION_KEY = os.getenv("AZURE_SUBSCRIPTION_KEY")
+API_VERSION = os.getenv("AZURE_API_VERSION", "2025-01-01-preview")
 
 # SQL Server Configuration
-SQL_SERVER = 'liclensdbsrv.database.windows.net'
-SQL_DATABASE = 'LicLensDev'
-SQL_USERNAME = 'liclensadmin'
-SQL_PASSWORD = 'jpO8m&$&3oq@dn'
+SQL_SERVER = os.getenv("SQL_SERVER", "liclensdbsrv.database.windows.net")
+SQL_DATABASE = os.getenv("SQL_DATABASE", "LicLensDev")
+SQL_USERNAME = os.getenv("SQL_USERNAME", "liclensadmin")
+SQL_PASSWORD = os.getenv("SQL_PASSWORD")
+
+# Validate critical environment variables
+if not SUBSCRIPTION_KEY:
+    raise ValueError("AZURE_SUBSCRIPTION_KEY environment variable is required")
+if not SQL_PASSWORD:
+    raise ValueError("SQL_PASSWORD environment variable is required")
 
 # Initialize Azure OpenAI client
 client = AzureOpenAI(

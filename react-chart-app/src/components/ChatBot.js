@@ -285,19 +285,67 @@ const generateSuggestions = (userQuery, hasResults = false) => {
   ];
 };
 
+// Storage keys
+const STORAGE_KEYS = {
+  MESSAGES: '365tunebot_messages',
+  SESSION_ID: '365tunebot_session_id',
+  SIDEBAR_DATA: '365tunebot_sidebar'
+};
+
+// Helper to safely parse JSON from localStorage
+const getStoredData = (key, defaultValue) => {
+  try {
+    const stored = localStorage.getItem(key);
+    if (!stored) return defaultValue;
+    const parsed = JSON.parse(stored);
+    // Convert timestamp strings back to Date objects for messages
+    if (key === STORAGE_KEYS.MESSAGES && Array.isArray(parsed)) {
+      return parsed.map(msg => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp),
+        isTyping: false // Never restore typing state
+      }));
+    }
+    return parsed;
+  } catch (e) {
+    console.error(`Error parsing stored ${key}:`, e);
+    return defaultValue;
+  }
+};
+
+// Helper to save data to localStorage
+const saveToStorage = (key, data) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    console.error(`Error saving ${key}:`, e);
+  }
+};
+
 const ChatBot = () => {
-  const [messages, setMessages] = useState([
-    {
+  // Initialize from localStorage or use defaults
+  const [messages, setMessages] = useState(() => {
+    const stored = getStoredData(STORAGE_KEYS.MESSAGES, null);
+    if (stored && stored.length > 0) {
+      return stored;
+    }
+    return [{
       id: 1,
       type: 'bot',
-      message: 'Hi! I\'m your 365 Tune Bot. Ask me questions about your Microsoft 365 data.',
+      message: 'Hi! I\'m 365 Tune Bot. Ask me questions about your Microsoft 365 data.',
       timestamp: new Date(),
       isTyping: false
-    }
-  ]);
+    }];
+  });
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random()}`);
+  const [sessionId] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.SESSION_ID);
+    if (stored) return stored;
+    const newId = `session_${Date.now()}_${Math.random()}`;
+    localStorage.setItem(STORAGE_KEYS.SESSION_ID, newId);
+    return newId;
+  });
   const messagesEndRef = useRef(null);
   const [typingMessageId, setTypingMessageId] = useState(null);
   const [sidebarData, setSidebarData] = useState(null);
@@ -307,6 +355,9 @@ const ChatBot = () => {
   const [sidebarBehavior, setSidebarBehavior] = useState('auto-decide');
   const [showArtifact, setShowArtifact] = useState(false);
   const [autoCloseTimer, setAutoCloseTimer] = useState(null);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const recognitionRef = useRef(null);
 
   const handleTypingComplete = useRef((messageId) => {
     setTypingMessageId(null);
@@ -328,9 +379,142 @@ const ChatBot = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    // Only save non-typing messages to avoid saving incomplete states
+    const messagesToSave = messages.filter(m => !m.isTyping);
+    if (messagesToSave.length > 0) {
+      // Keep only last 100 messages to prevent localStorage overflow
+      const trimmedMessages = messagesToSave.slice(-100);
+      saveToStorage(STORAGE_KEYS.MESSAGES, trimmedMessages);
+    }
+  }, [messages]);
+
+  // Check if we have stored messages to show/hide initial suggestions
+  useEffect(() => {
+    const storedMessages = getStoredData(STORAGE_KEYS.MESSAGES, []);
+    if (storedMessages.length > 1) {
+      setShowInitialSuggestions(false);
+    }
+  }, []);
+
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Clear chat history function
+  const clearChatHistory = () => {
+    const confirmClear = window.confirm('Are you sure you want to clear all chat history?');
+    if (confirmClear) {
+      // Clear localStorage
+      localStorage.removeItem(STORAGE_KEYS.MESSAGES);
+      localStorage.removeItem(STORAGE_KEYS.SESSION_ID);
+      localStorage.removeItem(STORAGE_KEYS.SIDEBAR_DATA);
+
+      // Reset state
+      setMessages([{
+        id: Date.now(),
+        type: 'bot',
+        message: 'Hi! I\'m 365 Tune Bot. Ask me questions about your Microsoft 365 data.',
+        timestamp: new Date(),
+        isTyping: false
+      }]);
+      setSidebarData(null);
+      setShowInitialSuggestions(true);
+
+      // Generate new session ID
+      const newSessionId = `session_${Date.now()}_${Math.random()}`;
+      localStorage.setItem(STORAGE_KEYS.SESSION_ID, newSessionId);
+
+      // Reload to reset session state
+      window.location.reload();
+    }
+  };
+
+  // Initialize Speech Recognition
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      setVoiceSupported(true);
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        console.log('Voice recognition started');
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        console.log('Voice recognition result received');
+        let finalTranscript = '';
+        let interimTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        // Update with final transcript if available, otherwise interim
+        setInputMessage(finalTranscript || interimTranscript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+
+        // Show user-friendly error messages
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          alert('Microphone access denied. Please allow microphone access in your browser settings.');
+        } else if (event.error === 'no-speech') {
+          alert('No speech detected. Please try again.');
+        } else if (event.error === 'network') {
+          alert('Network error. Please check your connection.');
+        } else {
+          alert(`Voice recognition error: ${event.error}`);
+        }
+      };
+
+      recognition.onend = () => {
+        console.log('Voice recognition ended');
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    } else {
+      console.warn('Speech Recognition API not supported in this browser');
+      setVoiceSupported(false);
+    }
+  }, []);
+
+  const toggleVoiceInput = () => {
+    if (!voiceSupported) {
+      alert('Voice input is not supported in your browser. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
+    if (isListening) {
+      console.log('Stopping voice recognition');
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    } else {
+      console.log('Starting voice recognition');
+      setInputMessage(''); // Clear input before starting
+      try {
+        recognitionRef.current?.start();
+      } catch (error) {
+        console.error('Error starting recognition:', error);
+        alert('Failed to start voice recognition. Please try again.');
+        setIsListening(false);
+      }
+    }
+  };
 
   const sendMessage = async (messageToSend = null) => {
     const actualMessage = messageToSend || inputMessage;
@@ -349,6 +533,15 @@ const ChatBot = () => {
       timestamp: new Date()
     };
     setMessages(prev => [...prev, userMessage]);
+
+    // Clear sidebar immediately when new question is entered to prevent blinking
+    setSidebarData(null);
+    setSidebarTyping(false);
+    setShowArtifact(false);
+    if (autoCloseTimer) {
+      clearTimeout(autoCloseTimer);
+      setAutoCloseTimer(null);
+    }
 
     try {
       const response = await axios.post(`${API_BASE_URL}/api/chat`, {
@@ -522,6 +715,19 @@ const ChatBot = () => {
             <h1>365 Tune Bot</h1>
             <p>Your intelligent Microsoft 365 data assistant</p>
           </div>
+          <div className="header-actions">
+            <button
+              className="clear-chat-btn"
+              onClick={clearChatHistory}
+              title="Clear chat history"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3,6 5,6 21,6"></polyline>
+                <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"></path>
+              </svg>
+              Clear Chat
+            </button>
+          </div>
         </div>
 
         {/* Initial suggestions (shown only before first query) */}
@@ -615,24 +821,59 @@ const ChatBot = () => {
         {/* Input area */}
         <div className="chat-input-area">
           <div className="input-container">
+            {isListening && (
+              <div className="voice-listening-indicator">
+                <div className="listening-animation">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <span className="listening-text">Listening...</span>
+              </div>
+            )}
             <textarea
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Message 365 Tune Bot..."
-              disabled={isLoading}
-              className="chat-input"
+              placeholder={isListening ? "Listening to your voice..." : "Message 365 Tune Bot or use voice input..."}
+              disabled={isLoading || isListening}
+              className={`chat-input ${isListening ? 'listening' : ''}`}
               rows="1"
             />
-            <button
-              onClick={() => sendMessage()}
-              disabled={!inputMessage.trim() || isLoading}
-              className="send-button"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M14.5 1L7 8.5L14.5 1ZM14.5 1L9.5 15L7 8.5L14.5 1Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
+            <div className="input-buttons">
+              {voiceSupported && (
+                <button
+                  onClick={toggleVoiceInput}
+                  disabled={isLoading}
+                  className={`voice-button ${isListening ? 'listening' : ''}`}
+                  title={isListening ? "Stop listening" : "Start voice input"}
+                >
+                  {isListening ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="2"/>
+                    </svg>
+                  ) : (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                      <line x1="12" y1="19" x2="12" y2="23"/>
+                      <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                  )}
+                </button>
+              )}
+              <button
+                onClick={() => sendMessage()}
+                disabled={!inputMessage.trim() || isLoading}
+                className="send-button"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M14.5 1L7 8.5L14.5 1ZM14.5 1L9.5 15L7 8.5L14.5 1Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>

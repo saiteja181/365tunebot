@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Scoring Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+            color: #000000;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: #000000;
+            color: #ffffff;
+            padding: 30px;
+            border: 2px solid #000000;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .input-section {
+            background: #ffffff;
+            border: 2px solid #000000;
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .input-group input {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #000000;
+            font-size: 1em;
+            background: #ffffff;
+            color: #000000;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            background: #f5f5f5;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            background: #000000;
+            color: #ffffff;
+            border: 2px solid #000000;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            background: #ffffff;
+            color: #000000;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            background: #ffffff;
+            border: 2px solid #000000;
+        }
+
+        .spinner {
+            border: 4px solid #f0f0f0;
+            border-top: 4px solid #000000;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-box {
+            background: #ffffff;
+            border: 2px solid #000000;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .score-card {
+            background: #ffffff;
+            border: 2px solid #000000;
+            padding: 30px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .score-circle {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            background: #000000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            color: #ffffff;
+            border: 3px solid #000000;
+        }
+
+        .score-value {
+            font-size: 4em;
+            font-weight: bold;
+        }
+
+        .score-label {
+            font-size: 1.2em;
+        }
+
+        .maturity-badge {
+            display: inline-block;
+            padding: 10px 30px;
+            background: #000000;
+            color: #ffffff;
+            border: 2px solid #000000;
+            margin: 10px 0;
+            font-size: 1.2em;
+        }
+
+        .category-section {
+            background: #ffffff;
+            border: 3px solid #000000;
+            margin-bottom: 30px;
+        }
+
+        .category-header {
+            background: #000000;
+            color: #ffffff;
+            padding: 25px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.3s;
+        }
+
+        .category-header:hover {
+            background: #333333;
+        }
+
+        .category-header-left {
+            flex: 1;
+        }
+
+        .category-name {
+            font-size: 1.8em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .category-weight {
+            opacity: 0.8;
+            font-size: 1.1em;
+        }
+
+        .category-header-right {
+            text-align: right;
+        }
+
+        .category-score {
+            font-size: 3.5em;
+            font-weight: bold;
+        }
+
+        .category-points {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #000000;
+            transition: width 0.5s ease;
+        }
+
+        .category-body {
+            padding: 0;
+            display: none;
+            border-top: 2px solid #000000;
+        }
+
+        .category-body.expanded {
+            display: block;
+        }
+
+        .controls-list {
+            padding: 0;
+        }
+
+        .control-item {
+            padding: 25px;
+            border-bottom: 1px solid #e0e0e0;
+            background: #ffffff;
+            transition: background 0.2s;
+        }
+
+        .control-item:hover {
+            background: #f8f8f8;
+        }
+
+        .control-item:last-child {
+            border-bottom: none;
+        }
+
+        .control-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .control-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            flex: 1;
+            padding-right: 20px;
+        }
+
+        .control-status {
+            padding: 8px 20px;
+            border: 2px solid #000000;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .control-status.passing {
+            background: #000000;
+            color: #ffffff;
+        }
+
+        .control-status.partial {
+            background: #ffffff;
+            color: #000000;
+        }
+
+        .control-status.failed {
+            background: #ffffff;
+            color: #000000;
+            border-style: dashed;
+        }
+
+        .control-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #f8f8f8;
+            border: 1px solid #e0e0e0;
+        }
+
+        .control-meta-item {
+            font-size: 0.95em;
+        }
+
+        .control-meta-label {
+            font-weight: bold;
+            color: #000000;
+        }
+
+        .control-details {
+            padding: 15px;
+            background: #fafafa;
+            border-left: 3px solid #000000;
+            margin-bottom: 10px;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .control-recommendation {
+            padding: 15px;
+            background: #ffffff;
+            border: 2px dashed #000000;
+            margin-top: 10px;
+            font-size: 0.95em;
+        }
+
+        .control-recommendation strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .api-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #000000;
+            color: #ffffff;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .expand-icon {
+            font-size: 1.5em;
+            transition: transform 0.3s;
+        }
+
+        .expand-icon.expanded {
+            transform: rotate(180deg);
+        }
+
+        .critical-gaps {
+            background: #ffffff;
+            border: 2px solid #000000;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .critical-gaps h2 {
+            color: #000000;
+            margin-bottom: 20px;
+            text-decoration: underline;
+        }
+
+        .gap-item {
+            background: #f5f5f5;
+            border-left: 4px solid #000000;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .gap-header {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+        }
+
+        .gap-recommendation {
+            color: #333333;
+            margin-top: 10px;
+        }
+
+        .api-links {
+            background: #000000;
+            color: #ffffff;
+            padding: 20px;
+            border: 2px solid #000000;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .api-links a {
+            display: inline-block;
+            margin: 10px;
+            padding: 12px 25px;
+            background: #ffffff;
+            color: #000000;
+            text-decoration: none;
+            border: 2px solid #ffffff;
+            transition: all 0.3s;
+        }
+
+        .api-links a:hover {
+            background: #000000;
+            color: #ffffff;
+        }
+
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-box {
+            background: #f8f8f8;
+            border: 2px solid #000000;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #000000;
+        }
+
+        .stat-label {
+            color: #666666;
+            margin-top: 5px;
+        }
+
+        .controls-actions {
+            background: #f5f5f5;
+            padding: 15px;
+            border: 2px solid #000000;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .controls-actions h3 {
+            margin: 0;
+            font-size: 1.5em;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-secondary {
+            padding: 10px 20px;
+            background: #ffffff;
+            color: #000000;
+            border: 2px solid #000000;
+            font-size: 0.9em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-secondary:hover {
+            background: #000000;
+            color: #ffffff;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .summary-item {
+            background: #ffffff;
+            border: 2px solid #000000;
+            padding: 20px;
+        }
+
+        .summary-item h4 {
+            margin: 0 0 10px 0;
+            font-size: 1.1em;
+            border-bottom: 2px solid #000000;
+            padding-bottom: 10px;
+        }
+
+        .summary-item-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Security Scoring Dashboard</h1>
+            <p>Microsoft 365 Tenant Security & Compliance Assessment</p>
+        </div>
+
+        <div class="api-links">
+            <strong>API Documentation:</strong>
+            <a href="http://localhost:8001/docs" target="_blank">Swagger UI</a>
+            <a href="http://localhost:8001/redoc" target="_blank">ReDoc</a>
+            <a href="http://localhost:8001/health" target="_blank">Health Check</a>
+        </div>
+
+        <div class="input-section">
+            <div class="input-group">
+                <input
+                    type="text"
+                    id="tenantCode"
+                    placeholder="Enter Tenant Code (e.g., 6c657194-e896-4367-a285-478e3ef159b6)"
+                    value="6c657194-e896-4367-a285-478e3ef159b6"
+                />
+                <button class="btn" onclick="fetchScoring()">Get Comprehensive Score</button>
+            </div>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Analyzing tenant security posture...</p>
+        </div>
+
+        <div id="error" style="display: none;"></div>
+
+        <div id="results" class="results">
+            <div class="score-card">
+                <div class="score-circle">
+                    <div class="score-value" id="overallScore">--</div>
+                    <div class="score-label">Overall Score</div>
+                </div>
+                <div class="maturity-badge">
+                    <span id="maturityLevel">--</span>
+                </div>
+                <p id="maturityDescription" style="color: #666; margin-top: 15px;"></p>
+
+                <div class="summary-stats" id="summaryStats"></div>
+            </div>
+
+            <div id="criticalGaps" class="critical-gaps" style="display: none;">
+                <h2>Critical Gaps - Immediate Action Required</h2>
+                <div id="criticalGapsList"></div>
+            </div>
+
+            <div class="controls-actions" id="controlsActions" style="display: none;">
+                <h3>Detailed Control Assessment</h3>
+                <div class="action-buttons">
+                    <button class="btn-secondary" onclick="expandAll()">Expand All Categories</button>
+                    <button class="btn-secondary" onclick="collapseAll()">Collapse All Categories</button>
+                </div>
+            </div>
+
+            <div id="categoriesContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8001';
+        let allCategories = ['security', 'compliance', 'identity_management', 'collaboration', 'operations'];
+
+        function toggleCategory(categoryKey) {
+            const body = document.getElementById(`category-body-${categoryKey}`);
+            const icon = document.getElementById(`expand-icon-${categoryKey}`);
+
+            body.classList.toggle('expanded');
+            icon.classList.toggle('expanded');
+        }
+
+        function expandAll() {
+            allCategories.forEach(cat => {
+                const body = document.getElementById(`category-body-${cat}`);
+                const icon = document.getElementById(`expand-icon-${cat}`);
+                if (body && icon) {
+                    body.classList.add('expanded');
+                    icon.classList.add('expanded');
+                }
+            });
+        }
+
+        function collapseAll() {
+            allCategories.forEach(cat => {
+                const body = document.getElementById(`category-body-${cat}`);
+                const icon = document.getElementById(`expand-icon-${cat}`);
+                if (body && icon) {
+                    body.classList.remove('expanded');
+                    icon.classList.remove('expanded');
+                }
+            });
+        }
+
+        async function fetchScoring() {
+            const tenantCode = document.getElementById('tenantCode').value.trim();
+
+            if (!tenantCode) {
+                showError('Please enter a tenant code');
+                return;
+            }
+
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').classList.remove('show');
+            document.getElementById('error').style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/scoring/comprehensive?tenant_code=${encodeURIComponent(tenantCode)}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    displayResults(data);
+                } else {
+                    showError(data.error || 'Failed to fetch scoring data');
+                }
+            } catch (error) {
+                showError(`Error: ${error.message}. Make sure the scoring service is running on port 8001.`);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function displayResults(data) {
+            // Overall Score
+            document.getElementById('overallScore').textContent = data.overall_score.toFixed(1);
+            document.getElementById('maturityLevel').textContent = `Level ${data.maturity_level.level}: ${data.maturity_level.name}`;
+            document.getElementById('maturityDescription').textContent = data.maturity_level.description;
+
+            // Summary Stats
+            const passingPercentage = ((data.summary.total_controls_passing / data.summary.total_controls_assessed) * 100).toFixed(0);
+            const summaryHtml = `
+                <div class="stat-box">
+                    <div class="stat-value">${data.summary.total_controls_assessed}</div>
+                    <div class="stat-label">Total Controls Assessed</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${data.summary.total_controls_passing}</div>
+                    <div class="stat-label">Passing Controls (${passingPercentage}%)</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${data.summary.total_controls_assessed - data.summary.total_controls_passing}</div>
+                    <div class="stat-label">Failed/Partial Controls</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${data.summary.critical_gaps_count}</div>
+                    <div class="stat-label">Critical Gaps</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${data.summary.data_based_controls}</div>
+                    <div class="stat-label">From Database</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${data.summary.controls_requiring_api}</div>
+                    <div class="stat-label">Requires API</div>
+                </div>
+            `;
+            document.getElementById('summaryStats').innerHTML = summaryHtml;
+
+            // Critical Gaps
+            if (data.critical_gaps && data.critical_gaps.length > 0) {
+                const gapsHtml = data.critical_gaps.map(gap => `
+                    <div class="gap-item">
+                        <div class="gap-header">${gap.control}</div>
+                        <div><strong>Category:</strong> ${gap.category}</div>
+                        <div><strong>Details:</strong> ${gap.details}</div>
+                        <div class="gap-recommendation"><strong>Action:</strong> ${gap.recommendation}</div>
+                    </div>
+                `).join('');
+                document.getElementById('criticalGapsList').innerHTML = gapsHtml;
+                document.getElementById('criticalGaps').style.display = 'block';
+            } else {
+                document.getElementById('criticalGaps').style.display = 'none';
+            }
+
+            // Categories with ALL controls
+            const categories = [
+                { key: 'security', name: 'Security', weight: 35 },
+                { key: 'compliance', name: 'Compliance', weight: 25 },
+                { key: 'identity_management', name: 'Identity Management', weight: 15 },
+                { key: 'collaboration', name: 'Collaboration & Productivity', weight: 15 },
+                { key: 'operations', name: 'Operations & Governance', weight: 10 }
+            ];
+
+            const categoriesHtml = categories.map(cat => {
+                const catData = data.categories[cat.key];
+                if (!catData || catData.error) {
+                    return '';
+                }
+
+                const score = catData.category_score || 0;
+                const controls = catData.controls || [];
+
+                const controlsHtml = controls.map((control, idx) => `
+                    <div class="control-item">
+                        <div class="control-header-row">
+                            <div class="control-name">${control.control}</div>
+                            <div class="control-status ${control.status.toLowerCase()}">
+                                ${control.status}
+                            </div>
+                        </div>
+
+                        <div class="control-meta">
+                            <div class="control-meta-item">
+                                <span class="control-meta-label">Category:</span> ${control.category}
+                            </div>
+                            <div class="control-meta-item">
+                                <span class="control-meta-label">Points:</span> ${control.points_earned}/${control.points_possible}
+                            </div>
+                            <div class="control-meta-item">
+                                <span class="control-meta-label">Weight:</span> ${control.weight}%
+                            </div>
+                            <div class="control-meta-item">
+                                <span class="control-meta-label">Source:</span> ${control.data_source === 'requires_api' ? '<span class="api-badge">API Required</span>' : 'Database'}
+                            </div>
+                        </div>
+
+                        <div class="control-details">
+                            ${control.details}
+                        </div>
+
+                        ${control.recommendation ? `
+                            <div class="control-recommendation">
+                                <strong>Recommendation:</strong>
+                                ${control.recommendation}
+                            </div>
+                        ` : ''}
+                    </div>
+                `).join('');
+
+                return `
+                    <div class="category-section">
+                        <div class="category-header" onclick="toggleCategory('${cat.key}')">
+                            <div class="category-header-left">
+                                <div class="category-name">${cat.name}</div>
+                                <div class="category-weight">Weight: ${cat.weight}% | ${controls.length} Controls</div>
+                            </div>
+                            <div class="category-header-right">
+                                <div class="category-score">${score.toFixed(1)}</div>
+                                <div class="category-points">${catData.total_points_earned}/${catData.total_points_possible} pts</div>
+                            </div>
+                            <div class="expand-icon" id="expand-icon-${cat.key}">▼</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${score}%"></div>
+                        </div>
+                        <div class="category-body" id="category-body-${cat.key}">
+                            <div class="controls-list">
+                                ${controlsHtml}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('categoriesContainer').innerHTML = categoriesHtml;
+
+            // Show controls actions
+            document.getElementById('controlsActions').style.display = 'flex';
+
+            // Show results
+            document.getElementById('results').classList.add('show');
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.innerHTML = `<div class="error-box"><strong>Error:</strong> ${message}</div>`;
+            errorDiv.style.display = 'block';
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('tenantCode').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                fetchScoring();
+            }
+        });
+    </script>
+</body>
+</html>

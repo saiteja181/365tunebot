@@ -58,14 +58,16 @@ class SecureSQLExecutor:
             print("Disconnected from SQL Server")
 
     def execute_query_secure(self, sql_query: str, tenant_code: str,
-                             session_id: str = "default") -> Tuple[bool, Any, str]:
+                             session_id: str = "default",
+                             params: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any, str]:
         """
-        Execute SQL query with tenant security validation
+        Execute SQL query with tenant security validation using parameterized queries
 
         Args:
-            sql_query: SQL query to execute
+            sql_query: SQL query to execute (with ? placeholders)
             tenant_code: Tenant code for filtering
             session_id: Session ID for audit logging
+            params: Optional parameters for parameterized query
 
         Returns:
             Tuple of (success, results_or_error, execution_info)
@@ -106,8 +108,36 @@ class SecureSQLExecutor:
             if self.rls_enabled:
                 self._set_session_context(tenant_code)
 
-            # Execute query
-            df = pd.read_sql(sql_query, self.connection)
+            # Execute query with parameters if provided
+            if params:
+                # Convert SQL Server @parameter syntax to pyodbc ? syntax
+                # params = {"tenant_code_0": "value", "tenant_code_1": "value"}
+                # SQL has @tenant_code_0, @tenant_code_1
+                # Need to convert to ? and provide values in order
+
+                # Sort params by key to ensure consistent ordering
+                sorted_params = sorted(params.items())
+                param_values = [value for key, value in sorted_params]
+
+                # Replace @param_name with ? in the SQL
+                converted_sql = sql_query
+                for param_name, _ in sorted_params:
+                    converted_sql = converted_sql.replace(f"@{param_name}", "?", 1)
+
+                # Execute with positional parameters
+                cursor = self.connection.cursor()
+                cursor.execute(converted_sql, param_values)
+
+                # Fetch results
+                columns = [column[0] for column in cursor.description]
+                results = []
+                for row in cursor.fetchall():
+                    results.append(dict(zip(columns, row)))
+                cursor.close()
+                df = pd.DataFrame(results)
+            else:
+                # Fallback to pandas read_sql (for queries without params)
+                df = pd.read_sql(sql_query, self.connection)
 
             # Convert to list of dictionaries
             results = df.to_dict('records')
@@ -144,7 +174,8 @@ class SecureSQLExecutor:
 
     def execute_query_with_retry(self, sql_query: str, tenant_code: str,
                                  session_id: str = "default",
-                                 max_retries: int = 2) -> Tuple[bool, Any, str, List[str]]:
+                                 max_retries: int = 2,
+                                 params: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any, str, List[str]]:
         """
         Execute query with retry logic (secure version)
 
@@ -153,6 +184,7 @@ class SecureSQLExecutor:
             tenant_code: Tenant code
             session_id: Session ID
             max_retries: Maximum retry attempts
+            params: Optional parameters for parameterized query
 
         Returns:
             Tuple of (success, results, execution_info, attempts_log)
@@ -161,7 +193,7 @@ class SecureSQLExecutor:
 
         for attempt in range(max_retries + 1):
             success, result, info = self.execute_query_secure(
-                sql_query, tenant_code, session_id
+                sql_query, tenant_code, session_id, params
             )
 
             attempt_info = f"Attempt {attempt + 1}: {info}"
@@ -392,10 +424,11 @@ class SQLExecutor(SecureSQLExecutor):
 
     def execute_query_with_retry(self, sql_query: str, tenant_code: str = None,
                                  session_id: str = "default",
-                                 max_retries: int = 2) -> Tuple[bool, Any, str, List[str]]:
+                                 max_retries: int = 2,
+                                 params: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any, str, List[str]]:
         """Execute query with retry (backward compatible)"""
         if tenant_code is None:
             print("WARNING: execute_query_with_retry called without tenant_code!")
             return False, "tenant_code is required", "Security: tenant_code required", []
 
-        return super().execute_query_with_retry(sql_query, tenant_code, session_id, max_retries)
+        return super().execute_query_with_retry(sql_query, tenant_code, session_id, max_retries, params)

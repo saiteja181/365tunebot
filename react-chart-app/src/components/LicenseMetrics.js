@@ -69,19 +69,14 @@ const LicenseMetrics = () => {
 
     } catch (err) {
       console.error('License data fetch error:', err);
-      // Fallback: create mock data for demonstration
-      setLicenseData([
-        { license_name: 'Microsoft 365 E3', total_units: 1000, consumed_units: 850, actual_cost: 22, utilization_percent: 85 },
-        { license_name: 'Microsoft 365 E1', total_units: 500, consumed_units: 320, actual_cost: 8, utilization_percent: 64 },
-        { license_name: 'Microsoft 365 F3', total_units: 200, consumed_units: 180, actual_cost: 3, utilization_percent: 90 },
-        { license_name: 'Power BI Pro', total_units: 100, consumed_units: 75, actual_cost: 10, utilization_percent: 75 },
-        { license_name: 'Project Plan 3', total_units: 50, consumed_units: 35, actual_cost: 30, utilization_percent: 70 }
-      ]);
+      // NO HARDCODED DATA - Show empty state with error
+      setLicenseData([]);
       setCostAnalysis({
-        TotalCost: 2500000,
-        AvgLicenseCost: 15.5,
-        UnusedLicenseCost: 125000,
-        UniqueLicenseTypes: 8
+        TotalCost: 0,
+        AvgLicenseCost: 0,
+        UnusedLicenseCost: 0,
+        UniqueLicenseTypes: 0,
+        error: 'Unable to fetch license data. Please ensure the backend is running.'
       });
     } finally {
       setLoading(false);

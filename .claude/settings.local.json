@@ -1,8 +1,25 @@
 {
   "permissions": {
     "allow": [
+      "Bash(del api_response_debug.txt ai_summary_output.txt test.txt nul)",
+      "Bash(del:*)",
+      "Bash(python test_chatbot_fixes.py:*)",
+      "Bash(python update_integration.py:*)",
+      "Bash(curl:*)",
       "Bash(python:*)",
-      "Bash(pip install:*)"
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(start http://localhost:8000/docs)",
+      "Bash(.\\.venv\\Scripts\\pip.exe install:*)",
+      "Bash(\"C:/Users/sai/Desktop/checking - Copy/.venv/Scripts/pip.exe\" install PyJWT)",
+      "Bash(\"C:/Users/sai/Desktop/checking - Copy/.venv/Scripts/python.exe\" -m pip install PyJWT)",
+      "Bash(\"C:/Users/sai/Desktop/checking - Copy/.venv/Scripts/python.exe\" \"C:/Users/sai/Desktop/checking - Copy/create_score_config.py\")",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(more:*)",
+      "Bash(\"C:/Users/sai/Desktop/checking - Copy/.venv/Scripts/python.exe\" real_fastapi.py)",
+      "Bash(\"C:/Users/sai/Desktop/checking - Copy/.venv/Scripts/python.exe\" app.py)",
+      "Bash(\"C:/Users/sai/Desktop/checking - Copy/.venv/Scripts/python.exe\" cost_forecasting_engine.py)"
     ],
     "deny": [],
     "ask": []

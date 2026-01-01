@@ -5,9 +5,11 @@ Based on working Streamlit implementation with lazy loading
 """
 
 from fastapi import FastAPI, HTTPException
+from auth import get_current_user, get_current_tenant, optional_auth
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+from contextlib import asynccontextmanager
 import uvicorn
 import os
 import sys
@@ -54,6 +56,30 @@ except ImportError as e:
     print(f"Warning: Could not import EnhancedAIInsights: {e}")
     ENHANCED_INSIGHTS_AVAILABLE = False
 
+# Import Redis Cache Manager
+try:
+    from redis_cache_manager import get_cache_manager
+    CACHE_MANAGER_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import RedisCacheManager: {e}")
+    CACHE_MANAGER_AVAILABLE = False
+
+# Import AI Mode Manager
+try:
+    from ai_mode_manager import get_ai_mode_manager, AIMode
+    AI_MODE_MANAGER_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import AIModeManager: {e}")
+    AI_MODE_MANAGER_AVAILABLE = False
+
+# Import Enhanced Conversation Memory
+try:
+    from conversation_memory_enhanced import get_enhanced_memory
+    ENHANCED_MEMORY_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import EnhancedMemory: {e}")
+    ENHANCED_MEMORY_AVAILABLE = False
+
 # Import Comprehensive Scoring
 try:
     from comprehensive_scoring import ComprehensiveTenantScoring
@@ -61,6 +87,14 @@ try:
 except ImportError as e:
     print(f"Warning: Could not import ComprehensiveTenantScoring: {e}")
     COMPREHENSIVE_SCORING_AVAILABLE = False
+
+# Import Cost Forecasting Engine
+try:
+    from cost_forecasting_engine import CostForecastingEngine
+    COST_FORECASTING_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import CostForecastingEngine: {e}")
+    COST_FORECASTING_AVAILABLE = False
 
 # Import Advisory Mode (NEW EXTENSION)
 try:
@@ -82,11 +116,64 @@ except ImportError as e:
     class SchemaManager:
         pass
 
-# Initialize FastAPI app
+# Import logger
+try:
+    from logger_config import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    # Fallback if logger not available
+    import logging
+    logger = logging.getLogger(__name__)
+
+# Global cleanup task reference
+cleanup_task = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Modern lifespan event handler for startup and shutdown"""
+    global cleanup_task
+
+    # Startup
+    print("365 Tune Bot FastAPI - Real Data Service Starting...")
+    print("Initializing system eagerly to avoid request timeouts...")
+
+    # Eager load the system
+    success = initialize_system_threadsafe()
+    if success:
+        print("System initialization completed successfully!")
+
+        # Pre-load dashboard data to warm up caches
+        try:
+            print("Warming up dashboard cache...")
+            dashboard_data = load_dashboard_data_real()
+            print(f"Dashboard cache warmed: {len(dashboard_data)} data sections loaded")
+        except Exception as e:
+            print(f"Warning: Could not warm dashboard cache: {e}")
+    else:
+        print("Warning: System initialization failed - will use fallback mode")
+
+    print("Available at: http://127.0.0.1:8000")
+    print("API Docs at: http://127.0.0.1:8000/docs")
+
+    # Start periodic cleanup of old conversation sessions
+    cleanup_task = asyncio.create_task(periodic_cleanup())
+
+    yield  # Application runs
+
+    # Shutdown
+    if cleanup_task:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+    print("365 Tune Bot FastAPI - Shutting down...")
+
 app = FastAPI(
     title="365 Tune Bot API - Real Data",
     description="REST API for 365 Tune Bot with real TextToSQL processing",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 # Configure CORS
@@ -102,13 +189,20 @@ app.add_middleware(
 system: Optional[TextToSQLSystem] = None
 system_initialized = False
 system_lock = threading.Lock()
-dashboard_cache = {}
-cache_timestamp = None
+
+# Redis Cache Manager
+cache_manager = None
+
+# AI Mode Manager
+ai_mode_manager = None
+
+# Enhanced Conversation Memory
+enhanced_memory = None
 
 # TENANT SECURITY: Your tenant code (in production, get from authentication)
-DEFAULT_TENANT_CODE = "6c657194-e896-4367-a285-478e3ef159b6"
+DEFAULT_TENANT_CODE = "70b0fb90-1eb4-46d8-b23e-f4104619181b"
 
-# Conversation memory storage - stores last 6 exchanges per session
+# DEPRECATED: Old in-memory conversation memory (kept for fallback)
 conversation_memory = {}
 memory_lock = threading.Lock()
 
@@ -123,67 +217,96 @@ class ConversationEntry:
         self.timestamp = timestamp
 
 def add_to_conversation_memory(session_id: str, user_message: str, bot_response: str):
-    """Add a conversation exchange to memory, keeping only last 3 exchanges"""
+    """
+    Add conversation to Redis cache (with fallback to in-memory)
+    Persistent across server restarts if Redis is available
+    """
+    # Skip simple greetings and help messages
+    if user_message.strip().lower() in ["hello", "hi", "hey", "hello there", "hi there"] or "help" in user_message.lower():
+        return
+
+    # Use Redis cache if available
+    if CACHE_MANAGER_AVAILABLE and cache_manager:
+        success = cache_manager.store_conversation_memory(
+            session_id, user_message, bot_response, ttl=86400  # 24 hours
+        )
+        if success:
+            print(f"[OK] Conversation stored in cache for session: {session_id}")
+            return
+
+    # Fallback to old in-memory system
     with memory_lock:
         if session_id not in conversation_memory:
             conversation_memory[session_id] = []
-        
-        # Skip adding simple greetings and help messages to preserve meaningful context
-        if user_message.strip().lower() in ["hello", "hi", "hey", "hello there", "hi there"] or "help" in user_message.lower():
-            return
-        
-        # Add new entry
+
         entry = ConversationEntry(user_message, bot_response, datetime.now())
         conversation_memory[session_id].append(entry)
-        
+
         # Keep only last 3 exchanges
         if len(conversation_memory[session_id]) > 3:
             conversation_memory[session_id] = conversation_memory[session_id][-3:]
 
 def get_conversation_context(session_id: str) -> str:
-    """Get conversation context as a formatted string for the AI"""
+    """
+    Get conversation context from Redis cache (with fallback)
+    Context persists across server restarts if Redis is available
+    """
+    # Try Redis cache first
+    if CACHE_MANAGER_AVAILABLE and cache_manager:
+        memory = cache_manager.get_conversation_memory(session_id)
+        if memory:
+            # Format Redis memory entries
+            context_parts = []
+            for i, entry in enumerate(memory[-3:]):  # Last 3 exchanges
+                user_msg = entry.get("user_message", "")
+                bot_msg = entry.get("bot_response", "")
+
+                # Truncate if needed
+                if len(bot_msg) > 200:
+                    bot_msg = bot_msg[:200] + "..."
+
+                context_parts.append(f"Previous Query {i+1}: {user_msg}")
+                context_parts.append(f"Previous Response {i+1}: {bot_msg}")
+
+            context = "\n".join(context_parts)
+            return context[:800]  # Max 800 chars
+
+    # Fallback to old in-memory system
     with memory_lock:
         if session_id not in conversation_memory or not conversation_memory[session_id]:
             return ""
-        
+
         # Only use the last 3 exchanges to keep context manageable
         recent_entries = conversation_memory[session_id][-3:]
         context_parts = []
-        
+
         for i, entry in enumerate(recent_entries):
-            # For SQL generation context, preserve more information
-            # Extract key information from queries
             user_msg = entry.user_message
             bot_msg = entry.bot_response
-            
+
             # If bot response contains SQL or data info, preserve that
             if "SQL:" in bot_msg or "users" in bot_msg.lower() or "department" in bot_msg.lower():
-                # Keep more of the response for SQL context
                 bot_msg = bot_msg[:200] + "..." if len(bot_msg) > 200 else bot_msg
             else:
-                # For non-data responses, keep shorter
                 bot_msg = bot_msg[:100] + "..." if len(bot_msg) > 100 else bot_msg
-            
-            # Always preserve full user questions for context continuity
+
             context_parts.append(f"Previous Query {i+1}: {user_msg}")
             context_parts.append(f"Previous Response {i+1}: {bot_msg}")
-        
-        # Allow more context length for better SQL generation
+
         context = "\n".join(context_parts)
-        if len(context) > 800:  # Increased from 300
-            # Instead of hard truncating, try to preserve complete exchanges
-            exchanges_to_keep = 2  # Keep last 2 exchanges instead of 3 if too long
+        if len(context) > 800:
+            exchanges_to_keep = 2
             recent_entries = conversation_memory[session_id][-exchanges_to_keep:]
             context_parts = []
-            
+
             for i, entry in enumerate(recent_entries):
                 user_msg = entry.user_message
                 bot_msg = entry.bot_response[:150] + "..." if len(entry.bot_response) > 150 else entry.bot_response
                 context_parts.append(f"Previous Query {i+1}: {user_msg}")
                 context_parts.append(f"Previous Response {i+1}: {bot_msg}")
-            
+
             context = "\n".join(context_parts)
-            
+
         return context
 
 def cleanup_old_sessions():
@@ -222,6 +345,10 @@ class QueryResponse(BaseModel):
     vector_search_results: Optional[List[Dict[str, Any]]] = None
     execution_info: Optional[str] = None
     error: Optional[str] = None
+    ai_mode: Optional[str] = None  # "normal" or "analysis"
+    insights: Optional[List[str]] = None  # AI insights (analysis mode)
+    recommendations: Optional[List[Dict]] = None  # AI recommendations (analysis mode)
+    cached: Optional[bool] = False  # Was this result cached?
 
 class ChatRequest(BaseModel):
     message: str
@@ -239,7 +366,7 @@ class ChatResponse(BaseModel):
 
 def initialize_system_threadsafe():
     """Thread-safe system initialization"""
-    global system, system_initialized, advisory_handler, schema_manager
+    global system, system_initialized, advisory_handler, schema_manager, cache_manager, ai_mode_manager, enhanced_memory
 
     with system_lock:
         if system_initialized:
@@ -252,7 +379,7 @@ def initialize_system_threadsafe():
         try:
             print("Initializing TextToSQLSystem (this may take a moment)...")
             system = TextToSQLSystem()
-            csv_file = "enhanced_db_schema.csv"
+            csv_file = "data/enhanced_db_schema.csv"
 
             if not os.path.exists(csv_file):
                 print(f"Warning: CSV file not found: {csv_file}")
@@ -262,6 +389,25 @@ def initialize_system_threadsafe():
             if not success:
                 print("Failed to initialize TextToSQLSystem")
                 return False
+
+            # Initialize Redis Cache Manager
+            if CACHE_MANAGER_AVAILABLE and cache_manager is None:
+                print("Initializing Redis Cache Manager...")
+                cache_manager = get_cache_manager()
+                stats = cache_manager.get_cache_stats()
+                print(f"[OK] Cache Manager initialized: {stats['cache_type']}")
+
+            # Initialize AI Mode Manager
+            if AI_MODE_MANAGER_AVAILABLE and ai_mode_manager is None:
+                print("Initializing AI Mode Manager...")
+                ai_mode_manager = get_ai_mode_manager()
+                print("[OK] AI Mode Manager initialized (Auto-mode enabled)")
+
+            # Initialize Enhanced Conversation Memory (FOLLOW-UP FIX)
+            if ENHANCED_MEMORY_AVAILABLE and enhanced_memory is None:
+                print("Initializing Enhanced Conversation Memory...")
+                enhanced_memory = get_enhanced_memory()
+                print("[OK] Enhanced Memory initialized (Follow-up questions enabled)")
 
             # DISABLED: Advisory Mode and Schema Manager
             # Uncomment below to re-enable these features
@@ -276,7 +422,7 @@ def initialize_system_threadsafe():
             #     print("Schema Manager initialized!")
 
             system_initialized = True
-            print("TextToSQLSystem initialized successfully!")
+            print("[OK] TextToSQLSystem initialized successfully!")
             return True
 
         except Exception as e:
@@ -293,20 +439,21 @@ def ensure_system_ready():
     return True
 
 def load_dashboard_data_real(tenant_code: Optional[str] = None):
-    """Load dashboard data using the same logic as Streamlit with SIMPLE MULTI-TENANT SUPPORT"""
-    global dashboard_cache, cache_timestamp
-
+    """
+    Load dashboard data with Redis caching
+    Persistent cache across server restarts if Redis is available
+    """
     # SIMPLE MULTI-TENANT: Use provided tenant_code or default
     if not tenant_code:
         tenant_code = DEFAULT_TENANT_CODE
 
     print(f"[MULTI-TENANT] Loading dashboard for tenant: {tenant_code}")
 
-    # Cache for 5 minutes (per tenant)
-    cache_key = f"{tenant_code}_dashboard"
-    if cache_timestamp and (time.time() - cache_timestamp) < 300 and dashboard_cache.get(cache_key):
-        print(f"[CACHE] Returning cached dashboard data for tenant: {tenant_code}")
-        return dashboard_cache[cache_key]
+    # Try Redis cache first
+    if CACHE_MANAGER_AVAILABLE and cache_manager:
+        cached_data = cache_manager.get_dashboard_data(tenant_code)
+        if cached_data:
+            return cached_data
 
     if not ensure_system_ready() or not system:
         return get_fallback_dashboard_data()
@@ -402,9 +549,10 @@ def load_dashboard_data_real(tenant_code: Optional[str] = None):
                 print(f"Error executing {key}: {e}")
                 dashboard_data[key] = []
 
-        # Cache the results (per tenant)
-        dashboard_cache[cache_key] = dashboard_data
-        cache_timestamp = time.time()
+        # Cache the results in Redis (300 seconds = 5 minutes)
+        if CACHE_MANAGER_AVAILABLE and cache_manager:
+            cache_manager.store_dashboard_data(tenant_code, dashboard_data, ttl=300)
+            print(f"[OK] Dashboard data cached for tenant: {tenant_code}")
 
         return dashboard_data
         
@@ -413,73 +561,55 @@ def load_dashboard_data_real(tenant_code: Optional[str] = None):
         return get_fallback_dashboard_data()
 
 def get_fallback_dashboard_data():
-    """Fallback dashboard data"""
+    """Fallback dashboard data - returns empty structure when database unavailable"""
+    # NO HARDCODED DATA - Return empty structure instead
     return {
-        'Total Users': 1250, 'Active Users': 987, 'Licensed Users': 823, 
-        'Countries': 15, 'Inactive Users': 263, 'Guest Users': 45, 'Admin Users': 12,
-        'Countries_Data': [
-            {"Country": "United States", "UserCount": 345, "ActiveUsers": 290, "LicensedUsers": 280},
-            {"Country": "United Kingdom", "UserCount": 123, "ActiveUsers": 100, "LicensedUsers": 95},
-            {"Country": "Canada", "UserCount": 89, "ActiveUsers": 75, "LicensedUsers": 70}
-        ],
-        'Departments_Data': [
-            {"Department": "Engineering", "UserCount": 234, "ActiveUsers": 220, "AvgEmailsSent30D": 45.2},
-            {"Department": "Sales", "UserCount": 189, "ActiveUsers": 180, "AvgEmailsSent30D": 62.1},
-            {"Department": "Marketing", "UserCount": 156, "ActiveUsers": 145, "AvgEmailsSent30D": 38.7}
-        ],
-        'License_Analysis': [
-            {"LicenseName": "Microsoft 365 E3", "TotalUnits": 500, "ConsumedUnits": 423, "ActualCost": 22.50, "UtilizationPercent": 84.6},
-            {"LicenseName": "Microsoft 365 E1", "TotalUnits": 300, "ConsumedUnits": 210, "ActualCost": 8.50, "UtilizationPercent": 70.0}
-        ]
+        'Total Users': 0, 'Active Users': 0, 'Licensed Users': 0,
+        'Countries': 0, 'Inactive Users': 0, 'Guest Users': 0, 'Admin Users': 0,
+        'Countries_Data': [],
+        'Departments_Data': [],
+        'License_Analysis': [],
+        'error': 'Database connection unavailable. Please ensure the system is initialized.'
     }
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the service on startup with eager loading"""
-    print("365 Tune Bot FastAPI - Real Data Service Starting...")
-    print("Initializing system eagerly to avoid request timeouts...")
-    
-    # Eager load the system
-    success = initialize_system_threadsafe()
-    if success:
-        print("System initialization completed successfully!")
-        
-        # Pre-load dashboard data to warm up caches
-        try:
-            print("Warming up dashboard cache...")
-            dashboard_data = load_dashboard_data_real()
-            print(f"Dashboard cache warmed: {len(dashboard_data)} data sections loaded")
-        except Exception as e:
-            print(f"Warning: Could not warm dashboard cache: {e}")
-    else:
-        print("Warning: System initialization failed - will use fallback mode")
-    
-    print("Available at: http://127.0.0.1:8000")
-    print("API Docs at: http://127.0.0.1:8000/docs")
-    
-    # Start periodic cleanup of old conversation sessions
-    asyncio.create_task(periodic_cleanup())
 
 @app.get("/")
 async def root():
-    """Health check"""
+    """Health check with feature status"""
+    cache_stats = None
+    if CACHE_MANAGER_AVAILABLE and cache_manager:
+        cache_stats = cache_manager.get_cache_stats()
+
     return {
-        "message": "365 Tune Bot FastAPI - Real Data Service",
+        "message": "365 Tune Bot FastAPI - Real Data Service (ALL APIs ENABLED)",
         "status": "running",
         "system_initialized": system_initialized,
-        "version": "2.0.0",
-        "endpoints": [
-            "/docs",
-            "/api/query",
+        "version": "3.0.0 (Phase 2)",
+        "active_endpoints": [
+            "/",
+            "/health",
             "/api/chat",
+            "/api/query",
             "/api/dashboard",
+            "/api/chart/{chart_type}",
             "/api/licenses",
+            "/api/security-score",
             "/api/insights",
             "/api/insights/enhanced",
             "/api/scoring/comprehensive",
-            "/api/chart/countries",
-            "/api/chart/departments"
-        ]
+            "/api/memory/debug/{session_id}",
+            "/api/memory/sessions",
+            "/api/schema/tables",
+            "/api/schema/tables/{table_name}",
+            "/api/schema/columns",
+            "/api/schema/search",
+            "/api/schema/export/csv",
+            "/api/schema/import/csv",
+            "/api/schema/statistics",
+            "/api/cache/stats",
+            "/api/cache/clear",
+            "/api/cache/session/{session_id}"
+        ],
+        "note": "All API endpoints are now enabled"
     }
 
 @app.get("/health")
@@ -492,9 +622,15 @@ async def health_check():
         "system_available": SYSTEM_AVAILABLE
     }
 
+# ============================================================================
+# API ENDPOINTS - All endpoints enabled
+# ============================================================================
 @app.post("/api/query", response_model=QueryResponse)
-async def process_query(request: QueryRequest, conversation_context: str = "", session_id: str = "default", tenant_code: str = None):
-    """Process natural language query using real TextToSQLSystem with dynamic multi-tenant support"""
+async def process_query(request: QueryRequest, conversation_context: str = "", session_id: str = "default", tenant_code: str = None, resolved_refs: Dict = None):
+    """
+    Process natural language query with enhanced memory for follow-up questions
+    Features: Query result caching, conversation persistence, reference resolution, intelligent AI mode routing
+    """
 
     try:
         start_time = time.time()
@@ -516,6 +652,24 @@ async def process_query(request: QueryRequest, conversation_context: str = "", s
 
         print(f"[MULTI-TENANT] Processing query for tenant: {tenant_code}")
 
+        # Check query result cache first
+        cached_result = None
+        if CACHE_MANAGER_AVAILABLE and cache_manager:
+            cached_result = cache_manager.get_query_result(request.query, tenant_code)
+            if cached_result:
+                processing_time = time.time() - start_time
+                print(f"[CACHE HIT] Returning cached result for query: {request.query[:50]}...")
+                return QueryResponse(
+                    success=True,
+                    processing_time=float(processing_time),
+                    result_count=cached_result.get("result_count", 0),
+                    final_answer=cached_result.get("final_answer", ""),
+                    sql_query=cached_result.get("sql_query", ""),
+                    results=cached_result.get("results", [])[:10],
+                    cached=True,
+                    ai_mode=cached_result.get("ai_mode", "normal")
+                )
+
         # Use the real system with conversation context, session_id, and DYNAMIC TENANT CODE
         result = system.process_query(request.query, conversation_context, session_id=session_id, tenant_code=tenant_code)
         processing_time = time.time() - start_time
@@ -535,7 +689,42 @@ async def process_query(request: QueryRequest, conversation_context: str = "", s
         execution_info = result.get("step_3_sql_execution", {}).get("execution_info", "")
         sample_results = result.get("step_3_sql_execution", {}).get("sample_results", [])
         result_count = int(len(sample_results)) if sample_results else 0
-        final_answer = result.get("step_4_final_answer", {}).get("answer", "")
+
+        # Use AI Mode Manager for intelligent result processing
+        final_answer = ""
+        ai_mode_info = {}
+
+        if AI_MODE_MANAGER_AVAILABLE and ai_mode_manager and sample_results:
+            print("Using AI Mode Manager for result processing...")
+            try:
+                # Auto-detect mode and process results intelligently
+                ai_result = ai_mode_manager.process_query_auto(
+                    request.query,
+                    sql_query,
+                    sample_results,
+                    execution_info
+                )
+
+                final_answer = ai_result.get("answer", "")
+                ai_mode_info = {
+                    "mode": ai_result.get("detected_mode", "unknown"),
+                    "auto_mode": ai_result.get("auto_mode", False)
+                }
+
+                # If Analysis mode, include recommendations
+                if ai_result.get("mode") == "analysis":
+                    ai_mode_info["insights"] = ai_result.get("insights", [])
+                    ai_mode_info["recommendations"] = ai_result.get("recommendations", [])
+
+                print(f"AI Mode: {ai_mode_info.get('mode', 'unknown').upper()}")
+
+            except Exception as e:
+                print(f"AI Mode Manager error: {e}")
+                # Fall back to old method
+                final_answer = result.get("step_4_final_answer", {}).get("answer", "")
+        else:
+            # Fallback to old result processor
+            final_answer = result.get("step_4_final_answer", {}).get("answer", "")
 
         # Create enhanced fallback answer if none provided
         if not final_answer and sample_results:
@@ -565,7 +754,8 @@ async def process_query(request: QueryRequest, conversation_context: str = "", s
             else:
                 clean_sample_results.append(result)
 
-        return QueryResponse(
+        # Prepare response
+        response = QueryResponse(
             success=True,
             processing_time=float(processing_time),
             result_count=int(result_count),
@@ -573,8 +763,31 @@ async def process_query(request: QueryRequest, conversation_context: str = "", s
             sql_query=str(sql_query) if sql_query else None,
             results=clean_sample_results,
             vector_search_results=vector_results[:5] if vector_results else None,
-            execution_info=str(execution_info) if execution_info else None
+            execution_info=str(execution_info) if execution_info else None,
+            cached=False,
+            ai_mode=ai_mode_info.get("mode", "normal"),
+            insights=ai_mode_info.get("insights", []) if ai_mode_info.get("mode") == "analysis" else None,
+            recommendations=ai_mode_info.get("recommendations", []) if ai_mode_info.get("mode") == "analysis" else None
         )
+
+        # Cache the successful query result for 5 minutes
+        if CACHE_MANAGER_AVAILABLE and cache_manager and result_count > 0:
+            cache_data = {
+                "result_count": result_count,
+                "final_answer": final_answer,
+                "sql_query": sql_query,
+                "results": clean_sample_results,
+                "ai_mode": ai_mode_info.get("mode", "normal")
+            }
+            cache_manager.store_query_result(
+                request.query,
+                tenant_code,
+                clean_sample_results,
+                sql_query,
+                ttl=300  # 5 minutes
+            )
+
+        return response
         
     except Exception as e:
         return QueryResponse(
@@ -735,15 +948,115 @@ async def chat_with_bot(request: ChatRequest):
 
         else:
             try:
-                # Get conversation context for this session
-                context = get_conversation_context(session_id)
+                # Use Enhanced Memory for follow-up questions
+                context = ""
+                resolved_refs = None
+
+                if ENHANCED_MEMORY_AVAILABLE and enhanced_memory:
+                    # Check for reference resolution (e.g., "show me those users")
+                    resolved_refs = enhanced_memory.resolve_references(session_id, request.message)
+
+                    if resolved_refs:
+                        ref_type = resolved_refs['type']
+                        print(f"[FOLLOW-UP] Resolved reference: {ref_type}")
+
+                        # Build augmented context with resolved references
+                        context_parts = []
+
+                        # Handle users with stored IDs
+                        if ref_type == 'users' and resolved_refs.get('user_ids'):
+                            user_ids = resolved_refs['user_ids']
+                            ids_str = "', '".join(user_ids[:20])  # Max 20
+                            context_parts.append(f"PREVIOUS RESULT - User IDs: {ids_str}")
+                            context_parts.append(f"SQL HINT: WHERE UserID IN ('{ids_str}')")
+                            print(f"[FOLLOW-UP] Resolved to {len(user_ids)} users")
+
+                        # NEW: Handle users by context (for COUNT query follow-ups)
+                        elif ref_type == 'users_by_context':
+                            hints = []
+
+                            if resolved_refs.get('group_filter'):
+                                group_name = resolved_refs['group_filter']
+                                context_parts.append(f"PREVIOUS CONTEXT - Group: {group_name}")
+                                hints.append(f"ur.GroupIdsCsv LIKE '%{group_name}%' OR g.DisplayName LIKE '%{group_name}%'")
+                                print(f"[FOLLOW-UP] Resolved to users in group: {group_name}")
+
+                            if resolved_refs.get('country_filter'):
+                                country = resolved_refs['country_filter']
+                                context_parts.append(f"PREVIOUS CONTEXT - Country: {country}")
+                                hints.append(f"Country = '{country}'")
+                                print(f"[FOLLOW-UP] Resolved to users in country: {country}")
+
+                            if resolved_refs.get('department_filter'):
+                                dept = resolved_refs['department_filter']
+                                context_parts.append(f"PREVIOUS CONTEXT - Department: {dept}")
+                                hints.append(f"Department = '{dept}'")
+                                print(f"[FOLLOW-UP] Resolved to users in department: {dept}")
+
+                            if hints:
+                                context_parts.append(f"SQL HINT: WHERE {' AND '.join(hints)}")
+
+                            # Add instruction to show users with licenses
+                            if 'license' in request.message.lower():
+                                context_parts.append("INSTRUCTION: Join UserRecords with Licenses table to show user licenses")
+                                context_parts.append("SQL PATTERN: SELECT ur.UserID, ur.DisplayName, l.Name FROM UserRecords ur JOIN Licenses l ON ur.Licenses LIKE '%'+CAST(l.Id AS VARCHAR(50))+'%'")
+
+                        elif ref_type == 'groups' and resolved_refs.get('group_names'):
+                            group_names = resolved_refs['group_names']
+                            names_str = "', '".join(group_names[:20])
+                            context_parts.append(f"PREVIOUS RESULT - Group Names: {names_str}")
+                            context_parts.append(f"SQL HINT: WHERE DisplayName IN ('{names_str}')")
+                            print(f"[FOLLOW-UP] Resolved to {len(group_names)} groups")
+
+                        elif ref_type == 'licenses' and resolved_refs.get('license_names'):
+                            license_names = resolved_refs['license_names']
+                            names_str = "', '".join(license_names[:20])
+                            context_parts.append(f"PREVIOUS RESULT - License Names: {names_str}")
+                            context_parts.append(f"SQL HINT: WHERE Name IN ('{names_str}')")
+                            print(f"[FOLLOW-UP] Resolved to {len(license_names)} licenses")
+
+                        elif ref_type == 'departments' and resolved_refs.get('departments'):
+                            departments = resolved_refs['departments']
+                            depts_str = "', '".join(departments[:20])
+                            context_parts.append(f"PREVIOUS RESULT - Departments: {depts_str}")
+                            context_parts.append(f"SQL HINT: WHERE Department IN ('{depts_str}')")
+                            print(f"[FOLLOW-UP] Resolved to {len(departments)} departments")
+
+                        elif ref_type == 'countries' and resolved_refs.get('countries'):
+                            countries = resolved_refs['countries']
+                            countries_str = "', '".join(countries[:20])
+                            context_parts.append(f"PREVIOUS RESULT - Countries: {countries_str}")
+                            context_parts.append(f"SQL HINT: WHERE Country IN ('{countries_str}')")
+                            print(f"[FOLLOW-UP] Resolved to {len(countries)} countries")
+
+                        # Combine with regular conversation context
+                        regular_context = enhanced_memory.get_conversation_text(session_id)
+                        if context_parts:
+                            context = "\n".join(context_parts)
+                            if regular_context:
+                                context = context + "\n\n" + regular_context
+                        else:
+                            context = regular_context
+                    else:
+                        # No references to resolve, use regular context
+                        context = enhanced_memory.get_conversation_text(session_id)
+                else:
+                    # Fallback to old context system
+                    context = get_conversation_context(session_id)
+                    resolved_refs = None
+
                 print(f"Processing query: {request.message}")
                 if context:
-                    print(f"Using conversation context (last {len(conversation_memory.get(session_id, []))} exchanges)")
-                    print(f"Context preview: {context[:100]}...")
+                    print(f"Using conversation context preview: {context[:100]}...")
 
-                # DYNAMIC TENANT: Process query with dynamic tenant code
-                query_result = await process_query(QueryRequest(query=request.message), context, session_id, tenant_code)
+                # DYNAMIC TENANT: Process query with dynamic tenant code and resolved references
+                query_result = await process_query(
+                    QueryRequest(query=request.message),
+                    context,
+                    session_id,
+                    tenant_code,
+                    resolved_refs  # Pass resolved references
+                )
                 processing_time = time.time() - start_time
                 
                 print(f"Query result success: {query_result.success}")
@@ -752,10 +1065,25 @@ async def chat_with_bot(request: ChatRequest):
                 
                 if query_result.success and hasattr(query_result, 'final_answer') and query_result.final_answer:
                     message = query_result.final_answer
-                    
-                    # Add this exchange to conversation memory
-                    add_to_conversation_memory(session_id, request.message, message)
-                    
+
+                    # Store results in enhanced memory for follow-up questions
+                    if ENHANCED_MEMORY_AVAILABLE and enhanced_memory:
+                        # Get SQL query from query_result
+                        sql_query = getattr(query_result, 'sql_query', '')
+                        results = getattr(query_result, 'results', [])
+
+                        enhanced_memory.store_query_result(
+                            session_id=session_id,
+                            user_query=request.message,
+                            sql_query=sql_query,
+                            results=results,
+                            bot_response=message
+                        )
+                        print(f"[MEMORY] Stored {len(results)} results for follow-up questions")
+                    else:
+                        # Fallback to old memory system
+                        add_to_conversation_memory(session_id, request.message, message)
+
                     return ChatResponse(
                         success=True,
                         message=message,
@@ -895,7 +1223,7 @@ async def get_enhanced_ai_insights():
         }
 
 @app.get("/api/scoring/comprehensive")
-async def get_comprehensive_scoring():
+async def get_comprehensive_scoring(tenant_code: Optional[str] = None):
     """Get comprehensive tenant security & compliance scoring"""
 
     try:
@@ -905,9 +1233,16 @@ async def get_comprehensive_scoring():
                 "error": "Comprehensive Scoring module not available"
             }
 
-        print("Generating comprehensive tenant scoring...")
-        scorer = ComprehensiveTenantScoring()
+        # Use provided tenant_code or default
+        if not tenant_code:
+            tenant_code = DEFAULT_TENANT_CODE
+
+        print(f"[MULTI-TENANT] Generating comprehensive scoring for tenant: {tenant_code}")
+        scorer = ComprehensiveTenantScoring(tenant_code=tenant_code)
         result = scorer.generate_comprehensive_score()
+
+        # Add tenant info to result
+        result['tenant_code'] = tenant_code
 
         print(f"Comprehensive scoring completed: {result.get('success', False)}")
         if result.get('success'):
@@ -925,6 +1260,97 @@ async def get_comprehensive_scoring():
             "error": str(e)
         }
 
+@app.get("/api/cost/forecast")
+async def get_cost_forecast(tenant_code: Optional[str] = None):
+    """Get comprehensive cost analysis and forecasting"""
+
+    try:
+        if not COST_FORECASTING_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Cost Forecasting Engine not available"
+            }
+
+        if not tenant_code:
+            tenant_code = DEFAULT_TENANT_CODE
+
+        print(f"[COST FORECAST] Generating forecast for tenant: {tenant_code}")
+        engine = CostForecastingEngine(tenant_code=tenant_code)
+        report = engine.generate_comprehensive_forecast()
+
+        print(f"Cost forecast generated successfully")
+        return {
+            "success": True,
+            **report
+        }
+
+    except Exception as e:
+        print(f"Error generating cost forecast: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.get("/api/cost/current-month")
+async def get_current_month_cost(tenant_code: Optional[str] = None):
+    """Get current month cost breakdown"""
+
+    try:
+        if not COST_FORECASTING_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Cost Forecasting Engine not available"
+            }
+
+        if not tenant_code:
+            tenant_code = DEFAULT_TENANT_CODE
+
+        engine = CostForecastingEngine(tenant_code=tenant_code)
+        current = engine.get_current_monthly_cost()
+
+        return {
+            "success": True,
+            "data": current
+        }
+
+    except Exception as e:
+        print(f"Error getting current month cost: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.get("/api/cost/license-breakdown")
+async def get_license_cost_breakdown(tenant_code: Optional[str] = None):
+    """Get cost breakdown by license type"""
+
+    try:
+        if not COST_FORECASTING_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Cost Forecasting Engine not available"
+            }
+
+        if not tenant_code:
+            tenant_code = DEFAULT_TENANT_CODE
+
+        engine = CostForecastingEngine(tenant_code=tenant_code)
+        breakdown = engine.get_license_breakdown_by_type()
+
+        return {
+            "success": True,
+            "data": breakdown
+        }
+
+    except Exception as e:
+        print(f"Error getting license breakdown: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 @app.get("/api/licenses")
 async def get_license_data(tenant_code: Optional[str] = None):
     """Get license data and metrics with simple multi-tenant support"""
@@ -937,28 +1363,12 @@ async def get_license_data(tenant_code: Optional[str] = None):
         print(f"[MULTI-TENANT] Loading licenses for tenant: {tenant_code}")
 
         if not ensure_system_ready() or not system:
-            # Fallback data
+            # NO HARDCODED DATA - Return empty structure when database unavailable
             return {
-                "success": True,
-                "licenses": [
-                    {
-                        "license_name": "Microsoft 365 E3",
-                        "total_units": 500,
-                        "consumed_units": 423,
-                        "actual_cost": 22.50,
-                        "utilization_percent": 84.6,
-                        "status": "Active"
-                    },
-                    {
-                        "license_name": "Microsoft 365 E1",
-                        "total_units": 300,
-                        "consumed_units": 210,
-                        "actual_cost": 8.50,
-                        "utilization_percent": 70.0,
-                        "status": "Active"
-                    }
-                ],
-                "source": "Fallback"
+                "success": False,
+                "licenses": [],
+                "error": "System not initialized. Please ensure database connection is available.",
+                "source": "Error"
             }
 
         # TENANT FILTERING in query
@@ -1220,6 +1630,105 @@ async def get_schema_statistics():
 
 # ============================================================================
 # END OF SCHEMA MANAGEMENT ENDPOINTS
+# ============================================================================
+
+# ============================================================================
+# CACHE MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.get("/api/cache/stats")
+async def get_cache_statistics():
+    """
+    Get cache statistics
+    Shows cache performance, hit rates, and storage info
+    """
+    if not CACHE_MANAGER_AVAILABLE or not cache_manager:
+        return {
+            "success": False,
+            "error": "Cache manager not available"
+        }
+
+    try:
+        stats = cache_manager.get_cache_stats()
+        return {
+            "success": True,
+            "cache_statistics": stats,
+            "features": {
+                "conversation_memory": True,
+                "query_result_caching": True,
+                "dashboard_caching": True,
+                "session_management": True
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/api/cache/clear")
+async def clear_cache(tenant_code: Optional[str] = None, clear_all: bool = False):
+    """
+    Clear cache entries
+    - tenant_code: Clear cache for specific tenant
+    - clear_all: Clear entire cache (use with caution!)
+    """
+    if not CACHE_MANAGER_AVAILABLE or not cache_manager:
+        return {
+            "success": False,
+            "error": "Cache manager not available"
+        }
+
+    try:
+        if clear_all:
+            success = cache_manager.clear_all_cache()
+            return {
+                "success": success,
+                "message": "All cache cleared" if success else "Failed to clear cache"
+            }
+        elif tenant_code:
+            success = cache_manager.clear_tenant_cache(tenant_code)
+            return {
+                "success": success,
+                "message": f"Cache cleared for tenant {tenant_code}" if success else "Failed to clear tenant cache"
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Please specify tenant_code or set clear_all=true"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.get("/api/cache/session/{session_id}")
+async def get_session_conversation(session_id: str):
+    """
+    Get conversation history for a session from cache
+    """
+    if not CACHE_MANAGER_AVAILABLE or not cache_manager:
+        return {
+            "success": False,
+            "error": "Cache manager not available"
+        }
+
+    try:
+        memory = cache_manager.get_conversation_memory(session_id)
+        if memory:
+            return {
+                "success": True,
+                "session_id": session_id,
+                "conversation_count": len(memory),
+                "conversations": memory
+            }
+        else:
+            return {
+                "success": True,
+                "session_id": session_id,
+                "conversation_count": 0,
+                "conversations": []
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+# ============================================================================
+# END OF PHASE 2 CACHE MANAGEMENT ENDPOINTS
 # ============================================================================
 
 if __name__ == "__main__":
